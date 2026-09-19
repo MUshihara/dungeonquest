@@ -219,6 +219,20 @@ Runtime.BossHeartbeatThink = function(now)
             Runtime.Humanoid.Health
         ),
         position = vec(Runtime.Root.Position),
+        boss_position =
+            Runtime.ActiveBossRoot
+            and vec(Runtime.ActiveBossRoot.Position)
+            or "nil",
+        vertical_gap =
+            Runtime.ActiveBossRoot
+            and string.format(
+                "%.1f",
+                verticalDistance(
+                    Runtime.Root.Position,
+                    Runtime.ActiveBossRoot.Position
+                )
+            )
+            or "nil",
         room = Runtime.CurrentRoomIndex,
         wave =
             Runtime.BossWave
