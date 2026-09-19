@@ -23,6 +23,15 @@ function horizontalDistance(a, b)
     return horizontal(a - b).Magnitude
 end
 
+function verticalDistance(a, b)
+    return math.abs(a.Y - b.Y)
+end
+
+function sameCombatLevel(a, b)
+    return verticalDistance(a, b)
+        <= (CFG.TARGET_LEVEL_VERTICAL_TOLERANCE or 10.0)
+end
+
 function unitHorizontal(v)
     local h = horizontal(v)
 
