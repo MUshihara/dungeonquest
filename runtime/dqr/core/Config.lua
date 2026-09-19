@@ -125,7 +125,7 @@ CFG = {
     -- Ordinary combat remains flat. A target on a different floor is not
     -- considered attack-reachable until a PathfindingService route climbs to
     -- approximately the same Y level.
-    TARGET_LEVEL_VERTICAL_TOLERANCE = 10.0,
+    TARGET_LEVEL_VERTICAL_TOLERANCE = 14.0,
     LEVEL_ROUTE_MAX_WAYPOINT_VERTICAL_DELTA = 22.0,
     LEVEL_ROUTE_LOG_COOLDOWN = 0.80,
 
@@ -767,8 +767,23 @@ CFG = {
     SAMURAI_LOCAL_GAP_HOLD_CLEARANCE = 6.0,
     SAMURAI_LOCAL_GAP_ROUTE_MAX = 4200,
 
+    -- Local-gap safety must include physical adds, not red geometry alone.
+    -- This specifically prevents Sanada crossShuriken / Elite Swordsman and
+    -- Miyamoto / Ultimate Swordsman overlap deaths seen in Modular V1.
+    SAMURAI_LOCAL_GAP_PHYSICAL_WEIGHT = 1.0,
+
+    -- Miyamoto can stack doubleFlameBeam with 39x39 flameShurikenHit circles
+    -- and 150-stud flameBeam lines. During that dense overlap require a larger
+    -- true clearance and permit a slightly wider route-safe local search.
+    MIYAMOTO_DENSE_GAP_HOLD_CLEARANCE = 12.0,
+    MIYAMOTO_DENSE_GAP_MIN_CLEARANCE = 6.0,
+    MIYAMOTO_DENSE_GAP_RADII = {4, 6, 8, 10, 12, 14, 16, 18, 22, 26},
+
     SHURIKEN_THROWER_ATTACK_ANIM = "rbxassetid://115248681546243",
-    SAMURAI_SWORDSMAN_ATTACK_ANIM = "rbxassetid://110763320481519",
+
+    -- Full Modular V1 runs confirmed this as the actual close melee swing.
+    -- 110763320481519 was an earlier unconfirmed/spawn-like observation.
+    SAMURAI_SWORDSMAN_ATTACK_ANIM = "rbxassetid://107260711747781",
 
     -- Threat planning.
     SAFETY_MARGIN = 2.0,
