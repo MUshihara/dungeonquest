@@ -15,6 +15,11 @@ function desiredCombatPoint()
     local player = Runtime.Root.Position
     local target = Runtime.TargetRoot.Position
 
+    -- Never orbit underneath/above a target on another map level.
+    if not sameCombatLevel(player, target) then
+        return nil
+    end
+
     local radial =
         unitHorizontal(player-target)
 
@@ -59,6 +64,7 @@ function clearApproachPath()
     Runtime.ApproachTarget = nil
     Runtime.ApproachFallbackPosition = nil
     Runtime.ApproachFallbackUntil = -math.huge
+    Runtime.ApproachLevelTransition = false
 end
 
 function approachGoalPosition()
@@ -78,9 +84,17 @@ function approachGoalPosition()
             origin - target
         )
 
+    local levelTransition =
+        not sameCombatLevel(origin, target)
+
+    local goalY =
+        levelTransition
+        and target.Y
+        or origin.Y
+
     return Vector3.new(
         target.X + away.X * desiredRange,
-        origin.Y,
+        goalY,
         target.Z + away.Z * desiredRange
     )
 end
@@ -89,6 +103,20 @@ function computeApproachPath(destination)
     if not Runtime.Root or not destination then
         return false
     end
+
+    local levelTransition =
+        not sameCombatLevel(
+            Runtime.Root.Position,
+            destination
+        )
+
+    local maxWaypointVerticalDelta =
+        levelTransition
+        and (
+            CFG.LEVEL_ROUTE_MAX_WAYPOINT_VERTICAL_DELTA
+            or CFG.SAFE_VERTICAL_DELTA
+        )
+        or CFG.SAFE_VERTICAL_DELTA
 
     local path =
         PathfindingService:CreatePath({
@@ -127,11 +155,12 @@ function computeApproachPath(destination)
             waypoints[i].Position
 
         if math.abs(point.Y - previous.Y)
-            > CFG.SAFE_VERTICAL_DELTA
+            > maxWaypointVerticalDelta
         then
             logKV("APPROACH_PATH_REJECT", {
                 index = i,
                 reason = "vertical_delta",
+                level_route = tostring(levelTransition),
                 from = vec(previous),
                 to = vec(point),
             })
@@ -146,6 +175,7 @@ function computeApproachPath(destination)
     Runtime.ApproachIndex = 2
     Runtime.ApproachDestination = destination
     Runtime.ApproachTarget = Runtime.Target
+    Runtime.ApproachLevelTransition = levelTransition
 
     return true
 end
@@ -270,16 +300,35 @@ function longRangeApproachThink()
         return false
     end
 
+    local origin =
+        Runtime.Root.Position
+
+    local targetPosition =
+        Runtime.TargetRoot.Position
+
     local distance =
         horizontalDistance(
-            Runtime.Root.Position,
-            Runtime.TargetRoot.Position
+            origin,
+            targetPosition
         )
+
+    local verticalGap =
+        verticalDistance(
+            origin,
+            targetPosition
+        )
+
+    local levelTransition =
+        verticalGap
+            > CFG.TARGET_LEVEL_VERTICAL_TOLERANCE
 
     local desiredRange =
         desiredRangeForTarget()
 
-    if distance <= desiredRange + CFG.APPROACH_TRIGGER_EXTRA then
+    if not levelTransition
+        and distance
+            <= desiredRange + CFG.APPROACH_TRIGGER_EXTRA
+    then
         clearApproachPath()
         return false
     end
@@ -298,10 +347,10 @@ function longRangeApproachThink()
 
     local destinationChanged =
         not Runtime.ApproachDestination
-        or horizontalDistance(
-            Runtime.ApproachDestination,
-            goal
-        ) > 18
+        or (
+            Runtime.ApproachDestination
+            - goal
+        ).Magnitude > 18
 
     local needsPath =
         targetChanged
@@ -316,11 +365,17 @@ function longRangeApproachThink()
             if now - Runtime.LastApproachLog >= CFG.APPROACH_LOG_COOLDOWN then
                 Runtime.LastApproachLog = now
 
-                logKV("APPROACH_PATH", {
-                    target = Runtime.Target.Name,
-                    distance = string.format("%.1f", distance),
-                    waypoints = #Runtime.ApproachWaypoints,
-                })
+                logKV(
+                    levelTransition
+                        and "LEVEL_APPROACH_PATH"
+                        or "APPROACH_PATH",
+                    {
+                        target = Runtime.Target.Name,
+                        distance = string.format("%.1f", distance),
+                        vertical_gap = string.format("%.1f", verticalGap),
+                        waypoints = #Runtime.ApproachWaypoints,
+                    }
+                )
             end
         else
             Runtime.ApproachWaypoints = nil
@@ -334,10 +389,19 @@ function longRangeApproachThink()
         ]
 
     if waypoint then
-        if horizontalDistance(
-            Runtime.Root.Position,
-            waypoint.Position
-        ) <= CFG.APPROACH_WAYPOINT_REACHED
+        local waypointDistance =
+            Runtime.ApproachLevelTransition
+            and (
+                Runtime.Root.Position
+                - waypoint.Position
+            ).Magnitude
+            or horizontalDistance(
+                Runtime.Root.Position,
+                waypoint.Position
+            )
+
+        if waypointDistance
+            <= CFG.APPROACH_WAYPOINT_REACHED
         then
             Runtime.ApproachIndex += 1
             waypoint =
@@ -355,11 +419,31 @@ function longRangeApproachThink()
 
             moveTo(
                 waypoint.Position,
-                "COMBAT_APPROACH_PATH"
+                Runtime.ApproachLevelTransition
+                    and "COMBAT_APPROACH_LEVEL"
+                    or "COMBAT_APPROACH_PATH"
             )
 
             return true
         end
+    end
+
+    -- Never fall back to flat orbit/progress while the target is on another
+    -- floor. Repath until PathfindingService gives us the legitimate route.
+    if levelTransition then
+        if now - Runtime.LastApproachLog
+            >= CFG.LEVEL_ROUTE_LOG_COOLDOWN
+        then
+            Runtime.LastApproachLog = now
+
+            logKV("LEVEL_ROUTE_WAIT", {
+                target = Runtime.Target.Name,
+                horizontal = string.format("%.1f", distance),
+                vertical_gap = string.format("%.1f", verticalGap),
+            })
+        end
+
+        return true
     end
 
     -- Pathfinding may fail in a scripted boss corridor. Keep making progress
@@ -1040,6 +1124,17 @@ function combatMovement()
         and Runtime.AzrallikFingerTellMove()
     then
         return true
+    end
+
+    if Runtime.Root
+        and Runtime.TargetRoot
+        and Runtime.TargetRoot.Parent
+        and not sameCombatLevel(
+            Runtime.Root.Position,
+            Runtime.TargetRoot.Position
+        )
+    then
+        return longRangeApproachThink()
     end
 
     if physicalPressureMove() then
