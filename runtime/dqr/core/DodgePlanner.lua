@@ -129,7 +129,7 @@ function groundBelow(point, depth)
     )
 end
 
-function safeMovementDestination(point, origin)
+function safeMovementDestination(point, origin, allowLevelChange)
     if not point then
         return false, "nil"
     end
@@ -138,9 +138,17 @@ function safeMovementDestination(point, origin)
         origin
         or (Runtime.Root and Runtime.Root.Position)
 
+    local maxVerticalDelta =
+        allowLevelChange
+        and (
+            CFG.LEVEL_ROUTE_MAX_WAYPOINT_VERTICAL_DELTA
+            or CFG.SAFE_VERTICAL_DELTA
+        )
+        or CFG.SAFE_VERTICAL_DELTA
+
     if origin
         and math.abs(point.Y - origin.Y)
-            > CFG.SAFE_VERTICAL_DELTA
+            > maxVerticalDelta
     then
         return false, "vertical_delta"
     end
