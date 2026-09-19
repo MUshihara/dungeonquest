@@ -1,0 +1,16 @@
+return {
+    npcShurikenThrow={Kind="Line",MaxRelevantAge=3.25},
+    shurikenThrow={Kind="Line",Owner="Sanada Yukimura",MaxRelevantAge=2.25},
+    crossShuriken={Kind="LineBatch",Owner="Sanada Yukimura",MaxRelevantAge=1.85,Planner="LocalGap"},
+    eliteSwordsmanSpin={Kind="Circle",Owner="Sanada Yukimura",MaxRelevantAge=3.25},
+    golemRockThrow={Kind="CircleSequence",Owner="Ancient Golem Guardian",MaxRelevantAge=4.30},
+    golemRockThrowSmall={Kind="Circle",Owner="Ancient Golem Guardian",MaxRelevantAge=1.30},
+    golemRockClap={Kind="Tell",Owner="Ancient Golem Guardian",MaxRelevantAge=2.50},
+    rockshatter={Kind="LineBatch",Owner="Ancient Golem Guardian",MaxRelevantAge=4.20,Planner="LocalGap"},
+    rockExplosion={Kind="Circle",Owner="Ancient Golem Guardian",MaxRelevantAge=0.45},
+    rockExplosionSmall={Kind="Circle",Owner="Ancient Golem Guardian",MaxRelevantAge=0.35},
+    flameShurikenHit={Kind="Circle",Owner="Miyamoto Musashi",MaxRelevantAge=2.50},
+    flameBeam={Kind="Line",Owner="Miyamoto Musashi",MaxRelevantAge=1.25},
+    doubleFlameBeam={Kind="LineBatch",Owner="Miyamoto Musashi",MaxRelevantAge=4.25,Planner="LocalGap"},
+    ["Flame Cyclone"]={Kind="Cyclone",Owner="Miyamoto Musashi",MaxRelevantAge=3.80},
+}

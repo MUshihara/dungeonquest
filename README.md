@@ -2,15 +2,20 @@
 
 Dedicated repository for the Dungeon Quest Reborn automation/research project.
 
-Start here:
+## Start here
 
 1. `docs/dqr/DQR_NEW_CHAT_HANDOFF_2026-09-19.md`
 2. `docs/dqr/DQR_UNDERWORLD_MASTER_KNOWLEDGE_2026-09-19.md`
+3. `docs/dqr/DQR_MODULAR_RUNTIME_2026-09-19.md`
 
-Current latest Underworld build at handoff:
+## Modular runtime
 
-`DQR_Underworld_Intelligent_Combat_V10_3_OvergrowthHardClear_KolvumarRollback_AzrallikCombo.lua`
+Active architecture: `runtime/dqr/`
+Entry point: `runtime/dqr/bootstrap.lua`
 
-The handoff documents preserve the validated Underworld findings, version history, combat architecture, boss mechanics, performance rules, diagnostic workflow, and the procedure for moving into a new Dungeon Quest Reborn world.
+Supported Modular V1 adapters:
+- The Underworld
+- Samurai Palace
 
-Important: keep DQR research here. Do not place DQR research-only documentation in the Serenity Hub production repository.
+The previous large sources are preserved under `runtime/dqr/archive/legacy/` as rollback references.
+Keep DQR research here; do not place research-only DQR material in the Serenity Hub production repository.
