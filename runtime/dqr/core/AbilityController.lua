@@ -98,10 +98,51 @@ function castAbility(slot, allowGeometryDanger)
     end
 
     local distance = math.huge
+    local verticalGap = math.huge
 
     if Runtime.TargetRoot
         and Runtime.Root
     then
+        verticalGap =
+            verticalDistance(
+                Runtime.TargetRoot.Position,
+                Runtime.Root.Position
+            )
+
+        if verticalGap
+            > CFG.TARGET_LEVEL_VERTICAL_TOLERANCE
+        then
+            local levelKey =
+                tool.Name .. ":level"
+
+            local lastLog =
+                Runtime.LastAbilityRangeSkipLog[
+                    levelKey
+                ]
+                or -math.huge
+
+            if now - lastLog
+                >= CFG.ABILITY_RANGE_SKIP_LOG_COOLDOWN
+            then
+                Runtime.LastAbilityRangeSkipLog[
+                    levelKey
+                ] = now
+
+                logKV("ABILITY_LEVEL_SKIP", {
+                    slot = slot,
+                    name = tool.Name,
+                    vertical_gap =
+                        string.format("%.1f", verticalGap),
+                    target =
+                        Runtime.Target
+                        and Runtime.Target.Name
+                        or "none",
+                })
+            end
+
+            return false
+        end
+
         distance =
             horizontalDistance(
                 Runtime.TargetRoot.Position,
@@ -436,13 +477,20 @@ Runtime.TryOpportunisticAttack = function(
                 and enemy.Humanoid
                 and enemy.Humanoid.Health > 0
             then
+                local sameLevel =
+                    sameCombatLevel(
+                        Runtime.Root.Position,
+                        enemy.Root.Position
+                    )
+
                 local d =
                     horizontalDistance(
                         Runtime.Root.Position,
                         enemy.Root.Position
                     )
 
-                if d <= range
+                if sameLevel
+                    and d <= range
                     and d <= CFG.OPPORTUNISTIC_NEARBY_MAX
                 then
                     local physicalEnemy =
@@ -657,6 +705,13 @@ function basicSwing(
     if now-Runtime.LastSwing
         < CFG.BASIC_SWING_COOLDOWN
     then
+        return false
+    end
+
+    if not sameCombatLevel(
+        Runtime.TargetRoot.Position,
+        Runtime.Root.Position
+    ) then
         return false
     end
 
