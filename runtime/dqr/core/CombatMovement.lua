@@ -701,14 +701,40 @@ Runtime.SamuraiLocalGapCandidate = function(
                 origin
             )
 
-    -- Safe means safe: do not cross the batch merely because a distant generic
-    -- candidate has a slightly better score.
+    local currentPhysicalPenalty =
+        wavePhysicalPenalty(origin)
+
+    local denseMiyamoto =
+        Runtime.ActiveBossName
+            == "Miyamoto Musashi"
+        and attackName
+            == "doubleFlameBeam"
+        and (
+            bossThreatHas(
+                "flameShurikenHit",
+                bossThreats
+            )
+            or bossThreatHas(
+                "flameBeam",
+                bossThreats
+            )
+        )
+
+    local holdClearance =
+        denseMiyamoto
+        and CFG.MIYAMOTO_DENSE_GAP_HOLD_CLEARANCE
+        or CFG.SAMURAI_LOCAL_GAP_HOLD_CLEARANCE
+
+    -- "Safe red geometry" is not actually safe if an Elite/Ultimate/physical
+    -- enemy is occupying the same pocket. This was the main Sanada overlap
+    -- failure in the two Modular V1 runs.
     if currentInside == 0
+        and currentPhysicalPenalty <= 0
         and (
             currentClearance
                 == math.huge
             or currentClearance
-                >= CFG.SAMURAI_LOCAL_GAP_HOLD_CLEARANCE
+                >= holdClearance
         )
     then
         return {
@@ -722,7 +748,9 @@ Runtime.SamuraiLocalGapCandidate = function(
                 labelPrefix
                 .. "_hold",
             Source =
-                "SamuraiPalaceExactGap",
+                denseMiyamoto
+                and "SamuraiPalaceDenseExactGap"
+                or "SamuraiPalaceExactGap",
         }
     end
 
@@ -735,12 +763,17 @@ Runtime.SamuraiLocalGapCandidate = function(
             bossPosition
         )
 
+    local radii =
+        denseMiyamoto
+        and CFG.MIYAMOTO_DENSE_GAP_RADII
+        or CFG.SAMURAI_LOCAL_GAP_RADII
+
     local best
     local bestScore =
         math.huge
 
     for _, radius in ipairs(
-        CFG.SAMURAI_LOCAL_GAP_RADII
+        radii
     ) do
         for i = 0,
             CFG.BOSS_WAVE_DIRECTIONS - 1
@@ -781,7 +814,19 @@ Runtime.SamuraiLocalGapCandidate = function(
                         candidate
                     )
 
+                local physicalPenalty =
+                    wavePhysicalPenalty(
+                        candidate
+                    )
+
+                local denseClearanceOkay =
+                    not denseMiyamoto
+                    or clearance == math.huge
+                    or clearance
+                        >= CFG.MIYAMOTO_DENSE_GAP_MIN_CLEARANCE
+
                 if inside == 0
+                    and denseClearanceOkay
                     and crossing
                         <= CFG.SAMURAI_LOCAL_GAP_ROUTE_MAX
                 then
@@ -803,6 +848,8 @@ Runtime.SamuraiLocalGapCandidate = function(
                         + radius * 150
                         + crossing * 0.05
                         + inward * 420
+                        + physicalPenalty
+                            * CFG.SAMURAI_LOCAL_GAP_PHYSICAL_WEIGHT
 
                     if clearance
                             ~= math.huge
@@ -836,7 +883,9 @@ Runtime.SamuraiLocalGapCandidate = function(
                                 labelPrefix
                                 .. "_local_gap",
                             Source =
-                                "SamuraiPalaceExactGap",
+                                denseMiyamoto
+                                and "SamuraiPalaceDenseExactGap"
+                                or "SamuraiPalaceExactGap",
                         }
                     end
                 end
