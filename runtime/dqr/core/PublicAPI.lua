@@ -141,7 +141,7 @@ ENV.DQR = {
 }
 
 logKV("START", {
-    version = "Modular_V1",
+    version = "Modular_V1_1",
     dungeon = DQR_WORLD and DQR_WORLD.Name or "Unknown",
     style = CFG.STYLE,
     place_id = game.PlaceId,
@@ -163,12 +163,15 @@ logKV("START", {
         CFG.PHYSICAL_DODGE_HANDOFF_ENABLED,
 
     sanada_cross_local_gap = true,
+    samurai_physical_gap_scoring = true,
+    samurai_confirmed_melee_tell = CFG.SAMURAI_SWORDSMAN_ATTACK_ANIM,
     golem_shatter_prediction = true,
     golem_shatter_tell =
         CFG.GOLEM_SHATTER_TELL_ANIM,
     golem_local_gap = true,
     miyamoto_client_event_observer = true,
     miyamoto_doublebeam_local_gap = true,
+    miyamoto_dense_overlap_guard = true,
 
     direct_shift_governor = true,
     direct_shift_cooldown =
