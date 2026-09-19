@@ -121,6 +121,14 @@ CFG = {
     APPROACH_MIN_PROGRESS = 2.0,
     APPROACH_LOG_COOLDOWN = 0.80,
 
+    -- Multi-level encounter navigation.
+    -- Ordinary combat remains flat. A target on a different floor is not
+    -- considered attack-reachable until a PathfindingService route climbs to
+    -- approximately the same Y level.
+    TARGET_LEVEL_VERTICAL_TOLERANCE = 10.0,
+    LEVEL_ROUTE_MAX_WAYPOINT_VERTICAL_DELTA = 22.0,
+    LEVEL_ROUTE_LOG_COOLDOWN = 0.80,
+
     -- V8.4 threat-free boss-stall recovery. Humanoid movement only.
     -- One V8.3 run repeated the same ~6-stud wall escape for ~25 seconds while
     -- Overgrowth stayed ~147 studs away. Recovery now widens 12→18→24 studs
