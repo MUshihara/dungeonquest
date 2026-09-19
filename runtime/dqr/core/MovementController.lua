@@ -16,6 +16,11 @@ function encounterStillActive()
         and Runtime.TargetHumanoid.Health > 0
 end
 
+function isLevelRouteMove(reason)
+    return tostring(reason or "")
+        == "COMBAT_APPROACH_LEVEL"
+end
+
 function isThreatSolverMove(reason)
     reason = tostring(reason or "")
 
@@ -182,11 +187,14 @@ moveTo = function(position, reason)
     Runtime.LastMove = now
 
     local requested = position
+    local levelRouteMove =
+        isLevelRouteMove(reason)
 
     local safeRequested, rejectReason =
         safeMovementDestination(
             requested,
-            Runtime.Root.Position
+            Runtime.Root.Position,
+            levelRouteMove
         )
 
     if not safeRequested
@@ -256,8 +264,12 @@ moveTo = function(position, reason)
         return
     end
 
+    -- Pathfinding owns wall routing for cross-floor travel. Do not flatten a
+    -- legitimate stair/ramp waypoint into a same-Y combat wall sidestep.
     local resolved =
-        resolveWallAwareDestination(
+        levelRouteMove
+        and requested
+        or resolveWallAwareDestination(
             Runtime.Root.Position,
             requested,
             reason
@@ -266,7 +278,8 @@ moveTo = function(position, reason)
     local safeResolved, resolvedReject =
         safeMovementDestination(
             resolved,
-            Runtime.Root.Position
+            Runtime.Root.Position,
+            levelRouteMove
         )
 
     if not safeResolved
