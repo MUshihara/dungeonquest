@@ -113,9 +113,50 @@ function controllerStep()
         stopTransitTween("combat_started")
     end
 
-    -- 1. Highest priority: survival movement.
-    -- V6 may still fire a ready skill while kiting if the current position is
-    -- outside real attack geometry and contact is not imminent.
+    -- 1. Highest priority for a true multi-level boss: reach the boss floor.
+    -- V1.2 allowed upstairs boss geometry / melee pressure to repeatedly steal
+    -- movement ownership while the player was still ~58 studs below Sanada.
+    -- The result was 8-9 minutes of movement downstairs with zero boss damage.
+    if Runtime.ActiveBossModel
+        and Runtime.ActiveBossRoot
+        and Runtime.Target == Runtime.ActiveBossModel
+        and not sameCombatLevel(
+            Runtime.Root.Position,
+            Runtime.ActiveBossRoot.Position
+        )
+    then
+        clearDodge("boss_level_transit_owner")
+        Runtime.BossWave = nil
+        Runtime.MageWave = nil
+
+        local now = os.clock()
+
+        if now
+            - (Runtime.LastLevelTransitOwnerLog or -math.huge)
+            >= 0.80
+        then
+            Runtime.LastLevelTransitOwnerLog = now
+
+            logKV("BOSS_LEVEL_TRANSIT_OWNER", {
+                boss = Runtime.ActiveBossName,
+                vertical_gap =
+                    string.format(
+                        "%.1f",
+                        verticalDistance(
+                            Runtime.Root.Position,
+                            Runtime.ActiveBossRoot.Position
+                        )
+                    ),
+            })
+        end
+
+        combatMovement()
+        stuckThink()
+        return
+    end
+
+    -- 2. Highest priority after level alignment: survival movement.
+    -- Skills may still fire while moving when the position is genuinely safe.
     if dodgeThink() then
         if CFG.AUTO_ABILITIES then
             -- Movement already owns the escape path. Keep firing instant skills
@@ -133,7 +174,7 @@ function controllerStep()
         return
     end
 
-    -- 2. If movement got pinned against geometry, commit briefly to the
+    -- 3. If movement got pinned against geometry, commit briefly to the
     -- selected open-space escape. Attacks can still fire while moving.
     if wallEscapeThink() then
         attackThink()
@@ -141,7 +182,7 @@ function controllerStep()
         return
     end
 
-    -- 3. Fight current enemy using ordinary Humanoid/path movement.
+    -- 4. Fight current enemy using ordinary Humanoid/path movement.
     -- V7.7 intentionally does not use forward CFrame tween transit.
     if Runtime.TargetRoot
         and Runtime.TargetHumanoid
@@ -153,7 +194,7 @@ function controllerStep()
         return
     end
 
-    -- 4. Move to next room.
+    -- 5. Move to next room.
     if navigationThink() then
         if Runtime.MovementOwner ~= "TRANSIT"
             and Runtime.MovementOwner ~= "TRANSIT_SETTLE"
@@ -164,7 +205,7 @@ function controllerStep()
         return
     end
 
-    -- 5. Nothing to navigate to yet: do not freeze beside a wall or a
+    -- 6. Nothing to navigate to yet: do not freeze beside a wall or a
     -- non-telegraphed physical enemy while waiting for the next state.
     safeIdleThink()
     stuckThink()
