@@ -813,9 +813,13 @@ Runtime.SamuraiLocalGapCandidate = function(
                     math.sin(angle)
                 ) * radius
 
-            if hasGroundAt(
-                    candidate
+            local candidateSafe =
+                safeMovementDestination(
+                    candidate,
+                    origin
                 )
+
+            if candidateSafe
                 and not movementWallHit(
                     origin,
                     candidate
