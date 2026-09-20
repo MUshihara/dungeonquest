@@ -220,6 +220,16 @@ function physicalPressureSettings(enemy)
             CFG.BLOOD_MINION_CRITICAL_RADIUS
     end
 
+    if enemy.Model.Name == "Samurai Swordsman"
+        or enemy.Model.Name == "Elite Swordsman"
+        or enemy.Model.Name == "Ultimate Swordsman"
+    then
+        return
+            CFG.SAMURAI_MELEE_SOFT_RADIUS,
+            CFG.SAMURAI_MELEE_RELEASE_RADIUS,
+            CFG.SAMURAI_MELEE_CRITICAL_RADIUS
+    end
+
     return
         CFG.MELEE_SOFT_RADIUS,
         CFG.MELEE_RELEASE_RADIUS,
@@ -2264,15 +2274,34 @@ function dodgeThink()
 
         elseif bossWave.Boss
                 == "Miyamoto Musashi"
-            and bossThreatHas(
+        then
+            if bossThreatHas(
                 "doubleFlameBeam",
                 bossThreats
-            )
-        then
-            samuraiGapAttack =
-                "doubleFlameBeam"
-            samuraiGapLabel =
-                "miyamoto_doublebeam"
+            ) then
+                samuraiGapAttack =
+                    "doubleFlameBeam"
+                samuraiGapLabel =
+                    "miyamoto_doublebeam"
+
+            elseif bossThreatHas(
+                "flameBeam",
+                bossThreats
+            ) then
+                samuraiGapAttack =
+                    "flameBeam"
+                samuraiGapLabel =
+                    "miyamoto_dense"
+
+            elseif bossThreatHas(
+                "flameShurikenHit",
+                bossThreats
+            ) then
+                samuraiGapAttack =
+                    "flameShurikenHit"
+                samuraiGapLabel =
+                    "miyamoto_dense"
+            end
         end
 
         if samuraiGapAttack
@@ -2553,9 +2582,11 @@ function dodgeThink()
 
             elseif plan.Label == "miyamoto_doublebeam_hold"
                 or plan.Label == "miyamoto_doublebeam_local_gap"
+                or plan.Label == "miyamoto_dense_hold"
+                or plan.Label == "miyamoto_dense_local_gap"
             then
                 bossMoveReason =
-                    "MIYAMOTO_DOUBLEBEAM_LOCAL_GAP"
+                    "MIYAMOTO_DENSE_LOCAL_GAP"
 
             elseif plan.Label == "azrallik_finger_escape"
                 or plan.Label == "azrallik_finger_hold"
