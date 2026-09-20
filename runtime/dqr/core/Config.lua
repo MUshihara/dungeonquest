@@ -786,6 +786,19 @@ CFG = {
     -- Miyamoto / Ultimate Swordsman overlap deaths seen in Modular V1.
     SAMURAI_LOCAL_GAP_PHYSICAL_WEIGHT = 1.0,
 
+    -- V1.3: boss-wave movement must preserve DPS range. V1.2's old local-gap
+    -- score penalized moving inward and could walk Sanada 100-150 studs away.
+    SAMURAI_BOSS_GAP_MAX_HOLD_EXTRA = 10.0,
+    SAMURAI_BOSS_GAP_RANGE_WEIGHT = 520.0,
+    SAMURAI_BOSS_GAP_RETREAT_WEIGHT = 900.0,
+    SAMURAI_BOSS_GAP_APPROACH_REWARD = 420.0,
+    SAMURAI_BOSS_GAP_HARD_LEASH = 72.0,
+
+    -- Threat geometry is 3D. Upstairs boss hazards must not control a player
+    -- standing ~58 studs below them during a legitimate floor transition.
+    THREAT_VERTICAL_MARGIN = 2.0,
+    VIRTUAL_THREAT_VERTICAL_MAX = 24.0,
+
     -- Miyamoto can stack doubleFlameBeam with 39x39 flameShurikenHit circles
     -- and 150-stud flameBeam lines. During that dense overlap require a larger
     -- true clearance and permit a slightly wider route-safe local search.
