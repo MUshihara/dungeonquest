@@ -66,6 +66,15 @@ CFG = {
     MELEE_SOFT_RADIUS = 18.0,
     MELEE_RELEASE_RADIUS = 23.0,
     MELEE_CRITICAL_RADIUS = 10.0,
+
+    -- Samurai Swordsman's confirmed attack animation arrives essentially at
+    -- impact in V1.1, so animation prediction cannot be the primary defense.
+    -- Keep extra ordinary-walking space from Samurai physical enemies instead.
+    SAMURAI_MELEE_SOFT_RADIUS = 22.0,
+    SAMURAI_MELEE_RELEASE_RADIUS = 28.0,
+    SAMURAI_MELEE_CRITICAL_RADIUS = 14.0,
+    SAMURAI_WAVE_PHYSICAL_HARD_RADIUS = 24.0,
+    SAMURAI_WAVE_PHYSICAL_SOFT_RADIUS = 34.0,
     MELEE_PANIC_RADIUS = 7.0,
     MELEE_DYNAMIC_HORIZON = 0.18,
     MELEE_DYNAMIC_MAX_BONUS = 5.0,
@@ -763,7 +772,12 @@ CFG = {
 
     GOLEM_ROCK_TELL_ANIM = "rbxassetid://119729303097590",
 
-    SAMURAI_LOCAL_GAP_RADII = {4, 6, 8, 10, 12, 14, 16, 18},
+    -- Small thrown rocks disappear roughly when their delayed explosion is
+    -- about to occur. Keep the landing zones live slightly beyond the rock.
+    GOLEM_SMALL_LANDING_RADIUS = 15.5,
+    GOLEM_SMALL_LANDING_LIFETIME = 1.35,
+
+    SAMURAI_LOCAL_GAP_RADII = {4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24},
     SAMURAI_LOCAL_GAP_HOLD_CLEARANCE = 6.0,
     SAMURAI_LOCAL_GAP_ROUTE_MAX = 4200,
 
@@ -778,6 +792,14 @@ CFG = {
     MIYAMOTO_DENSE_GAP_HOLD_CLEARANCE = 12.0,
     MIYAMOTO_DENSE_GAP_MIN_CLEARANCE = 6.0,
     MIYAMOTO_DENSE_GAP_RADII = {4, 6, 8, 10, 12, 14, 16, 18, 22, 26},
+
+    -- The cyclone contains dozens of crescent parts but is one encounter
+    -- hazard. Collapse it to one moving radial zone and keep dodge solutions
+    -- inside the observed boss arena rather than drifting 130+ studs away.
+    MIYAMOTO_CYCLONE_RADIUS = 30.0,
+    MIYAMOTO_CYCLONE_LIFETIME = 3.80,
+    MIYAMOTO_ARENA_LEASH = 82.0,
+    MIYAMOTO_ARENA_LEASH_PENALTY = 9000.0,
 
     SHURIKEN_THROWER_ATTACK_ANIM = "rbxassetid://115248681546243",
 
