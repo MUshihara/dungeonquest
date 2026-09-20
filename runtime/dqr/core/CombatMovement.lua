@@ -843,14 +843,32 @@ Runtime.SamuraiLocalGapCandidate = function(
                         candidate
                     )
 
-                local denseClearanceOkay =
-                    not denseMiyamoto
-                    or clearance == math.huge
-                    or clearance
-                        >= CFG.MIYAMOTO_DENSE_GAP_MIN_CLEARANCE
+                local requiredClearance =
+                    Runtime.ActiveBossName == "Sanada Yukimura"
+                    and CFG.SANADA_COMMITTED_GAP_MIN_CLEARANCE
+                    or (
+                        Runtime.ActiveBossName
+                            == "Ancient Golem Guardian"
+                        and CFG.GOLEM_COMMITTED_GAP_MIN_CLEARANCE
+                        or (
+                            Runtime.ActiveBossName
+                                == "Miyamoto Musashi"
+                            and math.max(
+                                CFG.MIYAMOTO_COMMITTED_GAP_MIN_CLEARANCE,
+                                denseMiyamoto
+                                    and CFG.MIYAMOTO_DENSE_GAP_MIN_CLEARANCE
+                                    or 0
+                            )
+                            or 0
+                        )
+                    )
+
+                local clearanceOkay =
+                    clearance == math.huge
+                    or clearance >= requiredClearance
 
                 if inside == 0
-                    and denseClearanceOkay
+                    and clearanceOkay
                     and crossing
                         <= CFG.SAMURAI_LOCAL_GAP_ROUTE_MAX
                 then
