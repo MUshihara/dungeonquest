@@ -301,6 +301,8 @@ Runtime = {
 
     MiyamotoPhase = "idle",
     MiyamotoBeamTellAt = -math.huge,
+    MiyamotoBeamPremoveTell = -math.huge,
+    MiyamotoBeamPremoveTarget = nil,
     MiyamotoCycloneActive = false,
     MiyamotoCycloneSuppressed = false,
     LastMiyamotoEventLog = -math.huge,
