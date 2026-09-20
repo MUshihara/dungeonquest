@@ -917,14 +917,7 @@ function rearmMovementAfterShift(
 end
 
 
-function doFastShift(
-    best,
-    maxDistance,
-    cooldown,
-    counterTag,
-    allowPartial,
-    requireZeroInside
-)
+function doFastShift(best, maxDistance, cooldown, counterTag, allowPartial)
     if not best or not Runtime.Root then
         return false
     end
@@ -989,21 +982,6 @@ function doFastShift(
 
     local oldPenalty, oldInside = pointDanger(Runtime.Root.Position)
     local newPenalty, newInside = pointDanger(candidate)
-
-    if requireZeroInside
-        and newInside > 0
-    then
-        logKV("FAST_SHIFT_REJECT_PARTIAL", {
-            source = tostring(counterTag or "FAST_SHIFT"),
-            planner = tostring(best.Label or "unknown"),
-            old_inside = oldInside,
-            new_inside = newInside,
-            requested = string.format("%.2f", delta.Magnitude),
-            shift = string.format("%.2f", shift),
-        })
-
-        return false, oldInside
-    end
 
     if newInside < oldInside
         or newPenalty < oldPenalty * 0.55
