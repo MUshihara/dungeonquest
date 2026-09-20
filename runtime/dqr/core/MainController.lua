@@ -151,6 +151,14 @@ function controllerStep()
         end
 
         combatMovement()
+
+        -- Movement ownership stays with the stair route. If a local add is
+        -- legitimately in range, instant offense may still fire without
+        -- redirecting the Humanoid away from the level transition.
+        if CFG.AUTO_ABILITIES then
+            attackThink(true)
+        end
+
         stuckThink()
         return
     end
