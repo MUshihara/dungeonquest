@@ -775,7 +775,12 @@ CFG = {
     -- Small thrown rocks disappear roughly when their delayed explosion is
     -- about to occur. Keep the landing zones live slightly beyond the rock.
     GOLEM_SMALL_LANDING_RADIUS = 15.5,
-    GOLEM_SMALL_LANDING_LIFETIME = 1.35,
+    GOLEM_SMALL_LANDING_LIFETIME = 1.70,
+
+    -- Main thrown rock explodes about 1.85s after the tell/landing marker.
+    -- Keep its landing footprint dangerous before the explosion VFX appears.
+    GOLEM_MAIN_LANDING_RADIUS = 19.0,
+    GOLEM_MAIN_LANDING_LIFETIME = 2.35,
 
     SAMURAI_LOCAL_GAP_RADII = {4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24},
     SAMURAI_LOCAL_GAP_HOLD_CLEARANCE = 6.0,
@@ -785,6 +790,14 @@ CFG = {
     -- This specifically prevents Sanada crossShuriken / Elite Swordsman and
     -- Miyamoto / Ultimate Swordsman overlap deaths seen in Modular V1.
     SAMURAI_LOCAL_GAP_PHYSICAL_WEIGHT = 1.0,
+
+    -- V1.4: once a boss mechanic has a safe local pocket, commit to that
+    -- pocket for the life of the same boss wave. Replan only if new geometry
+    -- actually invalidates it or a physical add occupies it.
+    SAMURAI_COMMITTED_GAP_MAX_RETURN = 30.0,
+    SANADA_COMMITTED_GAP_MIN_CLEARANCE = 5.0,
+    GOLEM_COMMITTED_GAP_MIN_CLEARANCE = 5.0,
+    MIYAMOTO_COMMITTED_GAP_MIN_CLEARANCE = 7.0,
 
     -- V1.3: boss-wave movement must preserve DPS range. V1.2's old local-gap
     -- score penalized moving inward and could walk Sanada 100-150 studs away.
