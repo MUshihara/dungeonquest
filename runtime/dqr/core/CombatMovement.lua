@@ -1018,8 +1018,6 @@ Runtime.SamuraiLocalGapCandidate = function(
 
                 if inside == 0
                     and clearanceOkay
-                    and physicalPenalty
-                        < CFG.WAVE_PHYSICAL_HARD_PENALTY
                     and crossing
                         <= CFG.SAMURAI_LOCAL_GAP_ROUTE_MAX
                 then
