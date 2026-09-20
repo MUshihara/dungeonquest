@@ -65,3 +65,17 @@ V1.3 changes:
 - specialized Samurai gap candidates are prevalidated against the movement safety layer.
 
 The global 3-second direct-shift governor, no-tween rule, one movement owner, and authoritative completion remain unchanged.
+
+
+## Modular V1.4 — committed boss survival
+
+Two Modular V1.3 runs both completed authoritatively, proving the timeout/navigation correction. The remaining issue was survival: 10 and 9 deaths, concentrated in Sanada crossShuriken, Golem shatter/rock sequences, and Miyamoto flame overlaps.
+
+V1.4 keeps V1.3 navigation/DPS behavior and changes only boss survival:
+
+- Sanada/Golem/Miyamoto exact-gap plans now commit to one validated pocket per boss wave; the pocket is reused while still safe and released only when new geometry or physical-add pressure invalidates it.
+- Boss pockets require meaningful edge clearance (Sanada 5, Golem 5, Miyamoto 7) rather than merely `inside == 0`.
+- Golem main rock precast creates landing-zone memory through the delayed main explosion; small-rock landing memory is extended through the small explosion handoff.
+- Miyamoto `endFireCyclone` / `hideFire` now authoritatively suppress stale Cyclone model updates so old geometry cannot recreate the virtual hazard after the phase ended.
+- Miyamoto `flameBeams` server->client warning enables one short ordinary lateral pre-move when no real boss wave owns movement yet.
+- No change to the global 3-second direct-shift governor, no-tween rule, one movement owner, floor-transition ownership, or authoritative completion.
