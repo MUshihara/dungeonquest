@@ -10,7 +10,15 @@ return {
         Tank = {["Shuriken Thrower"]=180,["Samurai Swordsman"]=170,["Elite Swordsman"]=455,["Ultimate Swordsman"]=470,["Sanada Yukimura"]=320,["Ancient Golem Guardian"]=340,["Miyamoto Musashi"]=370},
         Spell = {["Shuriken Thrower"]=190,["Samurai Swordsman"]=155,["Elite Swordsman"]=450,["Ultimate Swordsman"]=465,["Sanada Yukimura"]=320,["Ancient Golem Guardian"]=340,["Miyamoto Musashi"]=370},
     },
-    Config = {TRANSIT_TWEEN_ENABLED=false, TELEPORT_GLOBAL_COOLDOWN=3.00},
+    Config = {
+        TRANSIT_TWEEN_ENABLED=false,
+        TELEPORT_GLOBAL_COOLDOWN=3.00,
+
+        -- Samurai Shuriken lines are only ~4 studs wide. Keep multi-line
+        -- solutions local so room clears do not waste 29-34 stud excursions.
+        MAGE_WAVE_RADII={4,7,10,14,18,22},
+        MAGE_WAVE_TELEPORT_MAX=7.0,
+    },
     BossModules = {
         ["Sanada Yukimura"]="dungeons/samurai_palace/bosses/SanadaYukimura.lua",
         ["Ancient Golem Guardian"]="dungeons/samurai_palace/bosses/AncientGolemGuardian.lua",
