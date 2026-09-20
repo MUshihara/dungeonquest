@@ -827,6 +827,14 @@ CFG = {
     MIYAMOTO_ARENA_LEASH = 82.0,
     MIYAMOTO_ARENA_LEASH_PENALTY = 9000.0,
 
+    -- Server->client flameBeams warning repeatedly precedes real beam geometry.
+    -- Use only walking to pre-move laterally; real geometry still owns the
+    -- subsequent committed pocket.
+    MIYAMOTO_BEAM_PREMOVE_WINDOW = 0.72,
+    MIYAMOTO_BEAM_PREMOVE_STEPS = {6, 8, 10},
+    MIYAMOTO_BEAM_PREMOVE_ROUTE_MAX = 4200,
+    MIYAMOTO_BEAM_PREMOVE_RANGE_WEIGHT = 260.0,
+
     SHURIKEN_THROWER_ATTACK_ANIM = "rbxassetid://115248681546243",
 
     -- Full Modular V1 runs confirmed this as the actual close melee swing.
