@@ -2143,6 +2143,71 @@ function dodgeThink()
     local predictedPenalty, predictedInside =
         pointDanger(predicted)
 
+    -- Miyamoto server->client beam warning gives a short legitimate lead.
+    -- Pre-move laterally once per warning while no real boss wave owns us yet.
+    if Runtime.ActiveBossName
+            == "Miyamoto Musashi"
+        and not bossWave
+        and Runtime.MiyamotoBeamTellAt
+            > -math.huge
+        and os.clock()
+            - Runtime.MiyamotoBeamTellAt
+            <= CFG.MIYAMOTO_BEAM_PREMOVE_WINDOW
+        and currentInside == 0
+        and predictedInside == 0
+        and Runtime.MiyamotoBeamPremovementCandidate
+    then
+        if Runtime.MiyamotoBeamPremoveTell
+                ~= Runtime.MiyamotoBeamTellAt
+            or not Runtime.MiyamotoBeamPremoveTarget
+        then
+            local premove =
+                Runtime.MiyamotoBeamPremovementCandidate()
+
+            if premove then
+                Runtime.MiyamotoBeamPremoveTell =
+                    Runtime.MiyamotoBeamTellAt
+                Runtime.MiyamotoBeamPremoveTarget =
+                    premove.Position
+
+                logKV("MIYAMOTO_BEAM_PREMOVE", {
+                    step =
+                        string.format(
+                            "%.1f",
+                            premove.Radius or 0
+                        ),
+                    clearance =
+                        premove.Clearance == math.huge
+                        and "inf"
+                        or string.format(
+                            "%.1f",
+                            premove.Clearance or 0
+                        ),
+                })
+            end
+        end
+
+        local target =
+            Runtime.MiyamotoBeamPremoveTarget
+
+        if target then
+            local _, targetInside =
+                pointDanger(target)
+
+            if targetInside == 0 then
+                moveTo(
+                    target,
+                    "MIYAMOTO_BEAM_PREMOVE"
+                )
+
+                return true
+            end
+
+            Runtime.MiyamotoBeamPremoveTarget =
+                nil
+        end
+    end
+
     -- Ancient Golem Guardian predictive premove.
     -- The measured tell gives ~1.25-1.61 sec before the 9 rockshatter lines.
     -- Only use ordinary movement here; once real geometry appears the normal
