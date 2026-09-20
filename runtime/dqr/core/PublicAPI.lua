@@ -10,18 +10,6 @@ Runtime.Stop = function(reason)
 
     Runtime.Alive = false
 
-    if Runtime.MacroController
-        and type(Runtime.MacroController.StopAll) == "function"
-    then
-        pcall(Runtime.MacroController.StopAll, "runtime_stop")
-    end
-
-    if Runtime.DQRUI
-        and type(Runtime.DQRUI.Destroy) == "function"
-    then
-        pcall(Runtime.DQRUI.Destroy)
-    end
-
     if stopTransitTween then
         stopTransitTween("runtime_stop")
     end
