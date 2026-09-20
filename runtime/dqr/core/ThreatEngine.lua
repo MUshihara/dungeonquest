@@ -212,17 +212,6 @@ function registerThreat(part)
     end
 
     -- The eight small Golem rocks are followed by near-immediate small
-                    CFG.MIYAMOTO_CYCLONE_RADIUS,
-                    CFG.MIYAMOTO_CYCLONE_LIFETIME,
-                    "Flame Cyclone"
-                )
-            end
-        end
-
-        return
-    end
-
-    -- The eight small Golem rocks are followed by near-immediate small
     -- explosions after their ~1.1s rock lifetime. Keep each landing position
     -- dangerous through that handoff instead of learning the explosion only
     -- when its VFX appears.
