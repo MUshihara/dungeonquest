@@ -255,6 +255,9 @@ local function pauseFarm()
 
     if Runtime.Humanoid then
         pcall(function()
+            if Runtime.Root then
+                Runtime.Humanoid:MoveTo(Runtime.Root.Position)
+            end
             Runtime.Humanoid:Move(Vector3.zero, false)
         end)
     end
@@ -858,7 +861,10 @@ function MacroController.Status()
         Status = state.Status,
         Storage = state.Storage,
         InputPlayback = state.InputPlayback,
-        Duration = selected and tonumber(selected.Duration) or 0,
+        Duration =
+            state.Recording
+            and math.max(0, os.clock() - state.RecordingStartedAt)
+            or (selected and tonumber(selected.Duration) or 0),
         Events = selected and #selected.Events or 0,
         Count = #indexNames(),
         Error = state.LastError,
