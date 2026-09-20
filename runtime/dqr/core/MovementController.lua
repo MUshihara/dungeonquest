@@ -41,6 +41,7 @@ function isThreatSolverMove(reason)
         or reason == "GOLEM_SHATTER_LOCAL_GAP"
         or reason == "MIYAMOTO_DENSE_LOCAL_GAP"
         or reason == "MIYAMOTO_DOUBLEBEAM_LOCAL_GAP"
+        or reason == "MIYAMOTO_BEAM_PREMOVE"
         or reason == "AZRALLIK_SWEEP_GAP"
         or reason == "KOLVUMAR_SPIT_ESCAPE"
         or reason == "KOLVUMAR_SPIT_HOLD"
