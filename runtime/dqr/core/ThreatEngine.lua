@@ -143,6 +143,11 @@ function registerThreat(part)
                 Runtime.WatchedCyclones[top] = true
 
                 local function refreshCyclone()
+                    if Runtime.MiyamotoCycloneSuppressed then
+                        Runtime.VirtualThreats[top] = nil
+                        return
+                    end
+
                     if top.Parent
                         and primary.Parent
                     then
@@ -175,9 +180,38 @@ function registerThreat(part)
                     end
                 )
             else
-                addVirtualThreat(
-                    top,
-                    primary.Position,
+                if not Runtime.MiyamotoCycloneSuppressed then
+                    addVirtualThreat(
+                        top,
+                        primary.Position,
+                        CFG.MIYAMOTO_CYCLONE_RADIUS,
+                        CFG.MIYAMOTO_CYCLONE_LIFETIME,
+                        "Flame Cyclone"
+                    )
+                end
+            end
+        end
+
+        return
+    end
+
+    -- Main Golem rock landing marker. Recon measured the main explosion about
+    -- 1.85s after the throw sequence begins; create the landing danger before
+    -- the explosion VFX so we do not step back into it during a shatter dodge.
+    if top
+        and top.Name == "golemRockThrow"
+        and part.Name == "precast"
+    then
+        addVirtualThreat(
+            top,
+            part.Position,
+            CFG.GOLEM_MAIN_LANDING_RADIUS,
+            CFG.GOLEM_MAIN_LANDING_LIFETIME,
+            "Golem Main Landing"
+        )
+    end
+
+    -- The eight small Golem rocks are followed by near-immediate small
                     CFG.MIYAMOTO_CYCLONE_RADIUS,
                     CFG.MIYAMOTO_CYCLONE_LIFETIME,
                     "Flame Cyclone"
@@ -194,10 +228,7 @@ function registerThreat(part)
     -- when its VFX appears.
     if top
         and top.Name == "golemRockThrowSmall"
-        and (
-            part.Name == "precast"
-            or part.Name == "hitBox"
-        )
+        and part.Name == "precast"
     then
         addVirtualThreat(
             top,
