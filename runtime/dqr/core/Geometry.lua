@@ -67,6 +67,7 @@ function threatGeometry(meta)
             Type = "Circle",
             Center = part.Position,
             Radius = radius + CFG.SAFETY_MARGIN + extra,
+            Part = part,
             Source = meta.RootName,
         }
     end
@@ -76,6 +77,33 @@ function threatGeometry(meta)
         Part = part,
         Source = meta.RootName,
     }
+end
+
+function verticalHalfExtent(part)
+    if not part then
+        return 0
+    end
+
+    local cf = part.CFrame
+    local size = part.Size
+
+    return
+        math.abs(cf.RightVector.Y) * size.X * 0.5
+        + math.abs(cf.UpVector.Y) * size.Y * 0.5
+        + math.abs(cf.LookVector.Y) * size.Z * 0.5
+end
+
+function verticalClearance(part, point, margin)
+    margin = margin or 0
+
+    if not part then
+        return math.huge
+    end
+
+    return
+        math.abs(point.Y - part.Position.Y)
+        - verticalHalfExtent(part)
+        - margin
 end
 
 function pointInsideProjectedBox(part, point, margin)
@@ -104,7 +132,12 @@ function pointInsideProjectedBox(part, point, margin)
         )
 
     return
-        coordA <= axisA.Half + margin
+        verticalClearance(
+            part,
+            point,
+            margin + (CFG.THREAT_VERTICAL_MARGIN or 0)
+        ) <= 0
+        and coordA <= axisA.Half + margin
         and coordB <= axisB.Half + margin
 end
 
@@ -134,14 +167,38 @@ function boxClearance(part, point)
     local dx = coordA - axisA.Half
     local dz = coordB - axisB.Half
 
+    local horizontalClearance
+
     if dx <= 0 and dz <= 0 then
-        return -math.min(-dx, -dz)
+        horizontalClearance =
+            -math.min(-dx, -dz)
+    else
+        horizontalClearance =
+            math.sqrt(
+                math.max(dx,0)^2
+                + math.max(dz,0)^2
+            )
     end
 
-    return math.sqrt(
-        math.max(dx,0)^2
-        + math.max(dz,0)^2
-    )
+    local dy =
+        verticalClearance(
+            part,
+            point,
+            CFG.THREAT_VERTICAL_MARGIN or 0
+        )
+
+    if dy > 0 then
+        if horizontalClearance > 0 then
+            return math.sqrt(
+                horizontalClearance^2
+                + dy^2
+            )
+        end
+
+        return dy
+    end
+
+    return horizontalClearance
 end
 
 function pointInsideThreat(meta, point)
@@ -149,6 +206,16 @@ function pointInsideThreat(meta, point)
     if not g then return false end
 
     if g.Type == "Circle" then
+        if g.Part
+            and verticalClearance(
+                g.Part,
+                point,
+                CFG.THREAT_VERTICAL_MARGIN or 0
+            ) > 0
+        then
+            return false
+        end
+
         return
             horizontalDistance(
                 point,
@@ -168,12 +235,34 @@ function threatClearance(meta, point)
     if not g then return math.huge end
 
     if g.Type == "Circle" then
-        return
+        local horizontalClearance =
             horizontalDistance(
                 point,
                 g.Center
             )
             - g.Radius
+
+        if g.Part then
+            local dy =
+                verticalClearance(
+                    g.Part,
+                    point,
+                    CFG.THREAT_VERTICAL_MARGIN or 0
+                )
+
+            if dy > 0 then
+                if horizontalClearance > 0 then
+                    return math.sqrt(
+                        horizontalClearance^2
+                        + dy^2
+                    )
+                end
+
+                return dy
+            end
+        end
+
+        return horizontalClearance
     end
 
     return boxClearance(g.Part, point)
@@ -190,8 +279,41 @@ function cleanupVirtualThreats()
     end
 end
 
+function virtualThreatClearance(point, t)
+    if not t or not t.Center then
+        return math.huge
+    end
+
+    local horizontalClearance =
+        horizontalDistance(point, t.Center)
+        - t.Radius
+
+    local verticalRadius =
+        math.min(
+            t.Radius,
+            CFG.VIRTUAL_THREAT_VERTICAL_MAX or 24
+        )
+
+    local dy =
+        math.abs(point.Y - t.Center.Y)
+        - verticalRadius
+
+    if dy > 0 then
+        if horizontalClearance > 0 then
+            return math.sqrt(
+                horizontalClearance^2
+                + dy^2
+            )
+        end
+
+        return dy
+    end
+
+    return horizontalClearance
+end
+
 function pointInsideVirtual(point, t)
-    return horizontalDistance(point, t.Center) <= t.Radius
+    return virtualThreatClearance(point, t) <= 0
 end
 
 BOSS_HAZARD_OWNER = {
@@ -672,8 +794,7 @@ function pointDanger(point)
 
     for _, vt in pairs(Runtime.VirtualThreats) do
         local clearance =
-            horizontalDistance(point, vt.Center)
-            - vt.Radius
+            virtualThreatClearance(point, vt)
 
         nearest = math.min(nearest, clearance)
 
