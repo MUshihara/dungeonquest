@@ -264,6 +264,8 @@ Runtime.BindSamuraiPalaceSignals = function()
                         "flame_beams"
                     Runtime.MiyamotoBeamTellAt =
                         os.clock()
+                    Runtime.MiyamotoBeamPremoveTarget =
+                        nil
 
                 elseif action == "fireCyclone" then
                     Runtime.MiyamotoPhase =
