@@ -1666,14 +1666,39 @@ end
 -- Playback
 -- ------------------------------------------------------------
 
-local function nextMoveIndex(events, startIndex)
-    for index = startIndex, #events do
-        if events[index].type == "move" then
-            return index
-        end
+local function straightEnoughForLookahead(events, fromIndex, toIndex)
+    local a = vectorFromEvent(events[fromIndex])
+    local b = vectorFromEvent(events[fromIndex + 1])
+    local c = vectorFromEvent(events[toIndex])
+
+    if not a or not b or not c then
+        return false
     end
 
-    return nil
+    local first =
+        Vector3.new(
+            b.X - a.X,
+            0,
+            b.Z - a.Z
+        )
+
+    local combined =
+        Vector3.new(
+            c.X - a.X,
+            0,
+            c.Z - a.Z
+        )
+
+    if first.Magnitude < 0.15
+        or combined.Magnitude < 0.15
+    then
+        return true
+    end
+
+    return
+        first.Unit:Dot(
+            combined.Unit
+        ) >= 0.94
 end
 
 local function playBlocking(macro, token, loopIndex)
@@ -1728,6 +1753,11 @@ local function playBlocking(macro, token, loopIndex)
                 if not candidate
                     or candidate.type
                         ~= "move"
+                    or not straightEnoughForLookahead(
+                        events,
+                        index,
+                        candidateIndex
+                    )
                 then
                     break
                 end
