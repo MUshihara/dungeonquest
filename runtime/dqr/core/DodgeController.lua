@@ -1950,6 +1950,138 @@ function currentPositionThreatened()
     return inside > 0,inside
 end
 
+function samuraiCommittedGapMinClearance(bossName)
+    if bossName == "Sanada Yukimura" then
+        return CFG.SANADA_COMMITTED_GAP_MIN_CLEARANCE
+    elseif bossName == "Ancient Golem Guardian" then
+        return CFG.GOLEM_COMMITTED_GAP_MIN_CLEARANCE
+    elseif bossName == "Miyamoto Musashi" then
+        return CFG.MIYAMOTO_COMMITTED_GAP_MIN_CLEARANCE
+    end
+
+    return CFG.SAMURAI_LOCAL_GAP_HOLD_CLEARANCE
+end
+
+function samuraiCommittedGapCandidate(
+    bossWave,
+    bossThreats,
+    attackName,
+    labelPrefix
+)
+    if not bossWave
+        or not Runtime.Root
+        or not Runtime.SamuraiLocalGapCandidate
+    then
+        return nil
+    end
+
+    local minClearance =
+        samuraiCommittedGapMinClearance(
+            bossWave.Boss
+        )
+
+    local committed =
+        bossWave.SamuraiCommittedGap
+
+    if committed
+        and committed.Position
+        and committed.LabelPrefix == labelPrefix
+    then
+        local distance =
+            horizontalDistance(
+                Runtime.Root.Position,
+                committed.Position
+            )
+
+        local danger,
+            inside,
+            clearance =
+                pointDanger(
+                    committed.Position
+                )
+
+        local physicalPenalty =
+            wavePhysicalPenalty(
+                committed.Position
+            )
+
+        local pocketSafe =
+            inside == 0
+            and distance
+                <= CFG.SAMURAI_COMMITTED_GAP_MAX_RETURN
+            and physicalPenalty
+                < CFG.WAVE_PHYSICAL_HARD_PENALTY
+            and (
+                clearance == math.huge
+                or clearance >= minClearance
+            )
+
+        if pocketSafe then
+            return {
+                Position = committed.Position,
+                Radius = distance,
+                Score = danger,
+                Inside = 0,
+                Clearance = clearance,
+                Label = labelPrefix .. "_committed",
+                Source = "SamuraiCommittedGap",
+            }
+        end
+
+        logKV("SAMURAI_GAP_RELEASE", {
+            boss = bossWave.Boss,
+            wave = bossWave.Id,
+            label = labelPrefix,
+            inside = inside,
+            clearance =
+                clearance == math.huge
+                and "inf"
+                or string.format("%.1f", clearance),
+            distance =
+                string.format("%.1f", distance),
+            physical =
+                string.format("%.0f", physicalPenalty),
+        })
+
+        bossWave.SamuraiCommittedGap = nil
+    end
+
+    local fresh =
+        Runtime.SamuraiLocalGapCandidate(
+            bossThreats,
+            attackName,
+            labelPrefix
+        )
+
+    if fresh then
+        bossWave.SamuraiCommittedGap = {
+            Position = fresh.Position,
+            LabelPrefix = labelPrefix,
+            Attack = attackName,
+        }
+
+        logKV("SAMURAI_GAP_COMMIT", {
+            boss = bossWave.Boss,
+            wave = bossWave.Id,
+            label = labelPrefix,
+            radius =
+                string.format(
+                    "%.1f",
+                    fresh.Radius or 0
+                ),
+            clearance =
+                fresh.Clearance == math.huge
+                and "inf"
+                or string.format(
+                    "%.1f",
+                    fresh.Clearance or 0
+                ),
+        })
+    end
+
+    return fresh
+end
+
 function clearDodge(reason)
     if Runtime.DodgeActive then
         Runtime.DodgeActive = false
@@ -2308,7 +2440,8 @@ function dodgeThink()
             and Runtime.SamuraiLocalGapCandidate
         then
             local localGapPlan =
-                Runtime.SamuraiLocalGapCandidate(
+                samuraiCommittedGapCandidate(
+                    bossWave,
                     bossThreats,
                     samuraiGapAttack,
                     samuraiGapLabel
@@ -2570,20 +2703,24 @@ function dodgeThink()
 
             elseif plan.Label == "sanada_cross_hold"
                 or plan.Label == "sanada_cross_local_gap"
+                or plan.Label == "sanada_cross_committed"
             then
                 bossMoveReason =
                     "SANADA_CROSS_LOCAL_GAP"
 
             elseif plan.Label == "golem_shatter_hold"
                 or plan.Label == "golem_shatter_local_gap"
+                or plan.Label == "golem_shatter_committed"
             then
                 bossMoveReason =
                     "GOLEM_SHATTER_LOCAL_GAP"
 
             elseif plan.Label == "miyamoto_doublebeam_hold"
                 or plan.Label == "miyamoto_doublebeam_local_gap"
+                or plan.Label == "miyamoto_doublebeam_committed"
                 or plan.Label == "miyamoto_dense_hold"
                 or plan.Label == "miyamoto_dense_local_gap"
+                or plan.Label == "miyamoto_dense_committed"
             then
                 bossMoveReason =
                     "MIYAMOTO_DENSE_LOCAL_GAP"
@@ -2837,10 +2974,16 @@ function dodgeThink()
 
             if plan.Label == "sanada_cross_hold"
                 or plan.Label == "sanada_cross_local_gap"
+                or plan.Label == "sanada_cross_committed"
                 or plan.Label == "golem_shatter_hold"
                 or plan.Label == "golem_shatter_local_gap"
+                or plan.Label == "golem_shatter_committed"
                 or plan.Label == "miyamoto_doublebeam_hold"
                 or plan.Label == "miyamoto_doublebeam_local_gap"
+                or plan.Label == "miyamoto_doublebeam_committed"
+                or plan.Label == "miyamoto_dense_hold"
+                or plan.Label == "miyamoto_dense_local_gap"
+                or plan.Label == "miyamoto_dense_committed"
                 or plan.Label == "azrallik_safe_pressure"
                 or plan.Label == "azrallik_spread_premove"
                 or plan.Label == "azrallik_spread_hold"
