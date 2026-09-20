@@ -376,6 +376,22 @@ function wavePhysicalPenalty(point)
             local hard = CFG.WAVE_PHYSICAL_HARD_RADIUS
             local soft = CFG.WAVE_PHYSICAL_SOFT_RADIUS
 
+            if enemy.Model.Name == "Samurai Swordsman"
+                or enemy.Model.Name == "Elite Swordsman"
+                or enemy.Model.Name == "Ultimate Swordsman"
+            then
+                hard =
+                    math.max(
+                        hard,
+                        CFG.SAMURAI_WAVE_PHYSICAL_HARD_RADIUS
+                    )
+                soft =
+                    math.max(
+                        soft,
+                        CFG.SAMURAI_WAVE_PHYSICAL_SOFT_RADIUS
+                    )
+            end
+
             if enemy.Model.Name == "Blood Minion" then
                 hard = math.max(hard, CFG.BLOOD_MINION_CRITICAL_RADIUS + 3)
                 soft = math.max(soft, CFG.BLOOD_MINION_SOFT_RADIUS + 2)
@@ -891,16 +907,43 @@ function directEscapeCandidates(origin)
                     end
                 end
 
-                addAxis(
-                    axisA,
-                    componentByIndex(lp, axisA.LocalIndex),
-                    "boxA"
-                )
-                addAxis(
-                    axisB,
-                    componentByIndex(lp, axisB.LocalIndex),
-                    "boxB"
-                )
+                local minHalf =
+                    math.min(axisA.Half, axisB.Half)
+                local maxHalf =
+                    math.max(axisA.Half, axisB.Half)
+
+                -- Long/thin line hazards must exit across their SHORT axis.
+                -- V1.1 could select the 73-stud long edge and produce a
+                -- 60-70 stud dodge for a 4-stud-wide Shuriken line.
+                if minHalf > 0
+                    and maxHalf / minHalf
+                        >= CFG.LARGE_LINE_ASPECT_RATIO
+                then
+                    local narrow =
+                        axisA.Half <= axisB.Half
+                        and axisA
+                        or axisB
+
+                    addAxis(
+                        narrow,
+                        componentByIndex(
+                            lp,
+                            narrow.LocalIndex
+                        ),
+                        "line_short"
+                    )
+                else
+                    addAxis(
+                        axisA,
+                        componentByIndex(lp, axisA.LocalIndex),
+                        "boxA"
+                    )
+                    addAxis(
+                        axisB,
+                        componentByIndex(lp, axisB.LocalIndex),
+                        "boxB"
+                    )
+                end
             end
         end
     end
@@ -1296,6 +1339,28 @@ function chooseBossWavePoint()
                             math.abs(progress)
                             * CFG.BOSS_BACKTRACK_PENALTY
                     end
+                end
+            end
+
+            if Runtime.ActiveBossName == "Miyamoto Musashi"
+                and Runtime.ActiveBossRoot
+            then
+                local candidateBossDistance =
+                    horizontalDistance(
+                        candidate,
+                        Runtime.ActiveBossRoot.Position
+                    )
+
+                if candidateBossDistance
+                    > CFG.MIYAMOTO_ARENA_LEASH
+                then
+                    score +=
+                        150000
+                        + (
+                            candidateBossDistance
+                            - CFG.MIYAMOTO_ARENA_LEASH
+                        )
+                        * CFG.MIYAMOTO_ARENA_LEASH_PENALTY
                 end
             end
 
