@@ -2147,7 +2147,14 @@ function dodgeThink()
     -- Pre-move laterally once per warning while no real boss wave owns us yet.
     if Runtime.ActiveBossName
             == "Miyamoto Musashi"
-        and not bossWave
+        and not bossThreatHas(
+            "flameBeam",
+            bossThreats or {}
+        )
+        and not bossThreatHas(
+            "doubleFlameBeam",
+            bossThreats or {}
+        )
         and Runtime.MiyamotoBeamTellAt
             > -math.huge
         and os.clock()
@@ -3129,7 +3136,10 @@ function dodgeThink()
                         maxShift,
                         CFG.TELEPORT_GLOBAL_COOLDOWN,
                         tag,
-                        true
+                        true,
+                        Runtime.IsSamuraiBossName(
+                            bossWave.Boss
+                        )
                     )
 
                 if didShift then
