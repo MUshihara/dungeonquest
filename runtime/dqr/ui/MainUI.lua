@@ -1,6 +1,5 @@
 -- DQR UI bridge using the official Serenity universal V3.2 renderer.
 
-local GuiService = game:GetService("GuiService")
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
 
 local Macro = DQR_MACRO or ENV.DQRMacro
@@ -194,7 +193,7 @@ local function buildManifest()
                 Title = "Macro",
                 Icon = "route",
                 Description =
-                    "Record movement and actions in any Dungeon Quest place.",
+                    "Record only your character route and jumps in any Dungeon Quest place.",
                 Features = {
                     {
                         Id = "Library",
@@ -292,7 +291,7 @@ local function buildManifest()
                         Id = "Recorder",
                         Title = "Recorder",
                         Description =
-                            "Capture your route, camera, jumps, and supported input actions.",
+                            "Capture only your character movement route and jumps.",
                         Accent = "mint",
                         Expanded = true,
                         Controls = {
@@ -301,7 +300,7 @@ local function buildManifest()
                                 Type = "Action",
                                 Title = "Start Recording",
                                 Description =
-                                    "Begin recording the selected macro from your current position.",
+                                    "Begin recording your character path from the current position.",
                                 ButtonText = "RECORD",
                                 Callback = function()
                                     local ok, err =
@@ -335,7 +334,7 @@ local function buildManifest()
                                 Type = "Action",
                                 Title = "Play Once",
                                 Description =
-                                    "Replay the selected macro one time.",
+                                    "Replay the recorded character path one time.",
                                 ButtonText = "PLAY",
                                 Callback = function()
                                     local ok, err =
@@ -377,7 +376,7 @@ local function buildManifest()
                         Id = "Automation",
                         Title = "Auto Macro",
                         Description =
-                            "Continuously repeat the selected recorded macro.",
+                            "Continuously repeat the selected character movement path.",
                         Accent = "cyan",
                         Expanded = true,
                         Controls = {
@@ -537,9 +536,9 @@ function UI:UpdateLive()
         "Macro.Status.Storage",
         tostring(status.Storage)
         .. (
-            status.InputPlayback
-            and " • input replay ready"
-            or " • route replay only"
+            status.MovementOnly
+            and " • character movement only"
+            or " • movement macro"
         )
     )
 
@@ -588,38 +587,6 @@ function UI:Build()
     end
 
     self.App = appOrError
-
-    -- UI controls are never macro input. This prevents Stop & Save / Play /
-    -- dropdown clicks from becoming recorded mouse actions.
-    Macro.IsPointOverUI = function(position)
-        local okObjects, objects =
-            pcall(
-                GuiService.GetGuiObjectsAtPosition,
-                GuiService,
-                position.X,
-                position.Y
-            )
-
-        if not okObjects or type(objects) ~= "table" then
-            return false
-        end
-
-        for _, object in ipairs(objects) do
-            local current = object
-
-            while current do
-                if current:IsA("ScreenGui")
-                    and current.Name == "SerenityConcept02"
-                then
-                    return true
-                end
-
-                current = current.Parent
-            end
-        end
-
-        return false
-    end
 
     local controls =
         self.App.Adapter
@@ -697,10 +664,6 @@ function UI:Destroy()
 
     self.Alive = false
     self.Generation += 1
-
-    if Macro.IsPointOverUI then
-        Macro.IsPointOverUI = nil
-    end
 
     if self.App and type(self.App.Destroy) == "function" then
         pcall(self.App.Destroy, self.App)
