@@ -106,7 +106,7 @@ local function selectedOption(options)
 end
 
 local function currentDungeon()
-    local name = trim and trim(DQR_DUNGEON_NAME) or tostring(DQR_DUNGEON_NAME or "")
+    local name = tostring(DQR_DUNGEON_NAME or "")
     if name == "" then
         return "Unknown / no dungeonName"
     end
@@ -621,10 +621,30 @@ function UI:Build()
         return false
     end
 
-    local autoControl =
+    local controls =
         self.App.Adapter
         and self.App.Adapter.Controls
-        and self.App.Adapter.Controls[
+
+    local selectedControl =
+        controls
+        and controls[
+            "Macro.Library.SelectedMacro"
+        ]
+
+    if selectedControl
+        and type(selectedControl.Set) == "function"
+    then
+        pcall(
+            selectedControl.Set,
+            selectedControl,
+            selectedOption(macroOptions()),
+            true
+        )
+    end
+
+    local autoControl =
+        controls
+        and controls[
             "Macro.Automation.Auto"
         ]
 
