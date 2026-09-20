@@ -302,6 +302,7 @@ Runtime = {
     MiyamotoPhase = "idle",
     MiyamotoBeamTellAt = -math.huge,
     MiyamotoCycloneActive = false,
+    MiyamotoCycloneSuppressed = false,
     LastMiyamotoEventLog = -math.huge,
 }
 
