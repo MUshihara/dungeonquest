@@ -93,6 +93,8 @@ local MODULES = {
     "core/StuckController.lua",
     "core/MainController.lua",
     "core/PublicAPI.lua",
+    "core/MacroController.lua",
+    "ui/MainUI.lua",
 }
 
 for index, path in ipairs(MODULES) do
