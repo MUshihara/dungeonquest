@@ -1,843 +1,699 @@
--- DQR modular runtime: ui/MainUI.lua
--- Thin Serenity-style interface for Auto Farm (display only for now) + Macro.
+-- DQR UI bridge using the official Serenity universal V3.2 renderer.
 
-local Macro = Runtime.MacroController
+local GuiService = game:GetService("GuiService")
+local ENV = (type(getgenv) == "function" and getgenv()) or _G
+
+local Macro = DQR_MACRO or ENV.DQRMacro
 if not Macro then
     warn("[DQR UI] Macro controller unavailable")
     return
 end
 
-local UIEnv = (type(getgenv) == "function" and getgenv()) or _G
-local UI_KEY = "__SERENITY_DQR_UI_V1"
+local UI_KEY = "__SERENITY_DQR_UI_V2"
+local previous = ENV[UI_KEY]
 
-local previous = UIEnv[UI_KEY]
 if previous and type(previous.Destroy) == "function" then
     pcall(previous.Destroy)
 end
 
+local BASE =
+    "https://raw.githubusercontent.com/MUshihara/Serenity-hub/main/"
+
 local UI = {
     Alive = true,
-    Connections = {},
+    App = nil,
+    Generation = 0,
+    RebuildQueued = false,
+    DraftName = "",
 }
 
-local function track(connection)
-    UI.Connections[#UI.Connections + 1] = connection
-    return connection
-end
+local function notify(title, text)
+    local app = UI.App
+    local window = app and app.Window
 
-local function create(className, properties, parent)
-    local object = Instance.new(className)
-    for key, value in pairs(properties or {}) do
-        object[key] = value
-    end
-    if parent then
-        object.Parent = parent
-    end
-    return object
-end
-
-local function corner(parent, radius)
-    return create("UICorner", {
-        CornerRadius = UDim.new(0, radius or 8),
-    }, parent)
-end
-
-local function stroke(parent, color, transparency, thickness)
-    return create("UIStroke", {
-        Color = color,
-        Transparency = transparency or 0,
-        Thickness = thickness or 1,
-    }, parent)
-end
-
-local COLORS = {
-    Background = Color3.fromRGB(11, 14, 20),
-    Panel = Color3.fromRGB(17, 21, 29),
-    Panel2 = Color3.fromRGB(21, 26, 36),
-    Panel3 = Color3.fromRGB(27, 33, 44),
-    Border = Color3.fromRGB(48, 58, 76),
-    Accent = Color3.fromRGB(82, 214, 197),
-    AccentSoft = Color3.fromRGB(42, 108, 103),
-    Text = Color3.fromRGB(239, 243, 250),
-    Muted = Color3.fromRGB(151, 161, 181),
-    Danger = Color3.fromRGB(235, 92, 104),
-    Warning = Color3.fromRGB(241, 190, 75),
-    Success = Color3.fromRGB(104, 224, 155),
-}
-
-local parent
-if type(gethui) == "function" then
-    local ok, result = pcall(gethui)
-    if ok then
-        parent = result
+    if window and type(window.Notify) == "function" then
+        pcall(window.Notify, window, title, text)
     end
 end
 
-if not parent then
-    local ok, coreGui = pcall(game.GetService, game, "CoreGui")
-    if ok then
-        parent = coreGui
-    end
-end
+local function loadSerenity()
+    local ok, source = pcall(
+        game.HttpGet,
+        game,
+        BASE .. "dist/ui/serenity-v3.lua?dqr=" .. tostring(os.time()),
+        true
+    )
 
-if not parent then
-    parent = LP:WaitForChild("PlayerGui")
-end
-
-local gui = create("ScreenGui", {
-    Name = "SerenityDQR",
-    ResetOnSpawn = false,
-    IgnoreGuiInset = false,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    DisplayOrder = 500,
-}, parent)
-
-UI.Gui = gui
-
-local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
-local compact = viewport.X < 650
-local sidebarWidth = compact and 110 or 150
-
-local main = create("Frame", {
-    Name = "Window",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.new(0.86, 0, 0.78, 0),
-    BackgroundColor3 = COLORS.Background,
-    BorderSizePixel = 0,
-    ClipsDescendants = false,
-}, gui)
-
-create("UISizeConstraint", {
-    MinSize = Vector2.new(340, 390),
-    MaxSize = Vector2.new(820, 560),
-}, main)
-
-corner(main, 12)
-stroke(main, COLORS.Border, 0.15, 1)
-
-local topbar = create("Frame", {
-    Name = "Topbar",
-    Size = UDim2.new(1, 0, 0, 48),
-    BackgroundColor3 = COLORS.Panel,
-    BorderSizePixel = 0,
-}, main)
-
-corner(topbar, 12)
-
-create("Frame", {
-    Position = UDim2.new(0, 0, 1, -1),
-    Size = UDim2.new(1, 0, 0, 1),
-    BackgroundColor3 = COLORS.Border,
-    BorderSizePixel = 0,
-}, topbar)
-
-local brand = create("TextLabel", {
-    Position = UDim2.fromOffset(16, 0),
-    Size = UDim2.new(1, -120, 1, 0),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.GothamSemibold,
-    Text = "SERENITY  •  DUNGEON QUEST",
-    TextColor3 = COLORS.Text,
-    TextSize = compact and 13 or 15,
-    TextXAlignment = Enum.TextXAlignment.Left,
-}, topbar)
-
-local minimize = create("TextButton", {
-    AnchorPoint = Vector2.new(1, 0.5),
-    Position = UDim2.new(1, -48, 0.5, 0),
-    Size = UDim2.fromOffset(30, 30),
-    BackgroundColor3 = COLORS.Panel3,
-    BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold,
-    Text = "—",
-    TextColor3 = COLORS.Muted,
-    TextSize = 15,
-}, topbar)
-corner(minimize, 7)
-
-local close = create("TextButton", {
-    AnchorPoint = Vector2.new(1, 0.5),
-    Position = UDim2.new(1, -12, 0.5, 0),
-    Size = UDim2.fromOffset(30, 30),
-    BackgroundColor3 = COLORS.Panel3,
-    BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold,
-    Text = "×",
-    TextColor3 = COLORS.Muted,
-    TextSize = 18,
-}, topbar)
-corner(close, 7)
-
-local body = create("Frame", {
-    Position = UDim2.fromOffset(0, 48),
-    Size = UDim2.new(1, 0, 1, -48),
-    BackgroundTransparency = 1,
-}, main)
-
-local sidebar = create("Frame", {
-    Size = UDim2.new(0, sidebarWidth, 1, 0),
-    BackgroundColor3 = COLORS.Panel,
-    BorderSizePixel = 0,
-}, body)
-
-create("Frame", {
-    AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.new(1, 0, 0, 0),
-    Size = UDim2.new(0, 1, 1, 0),
-    BackgroundColor3 = COLORS.Border,
-    BorderSizePixel = 0,
-}, sidebar)
-
-local navTitle = create("TextLabel", {
-    Position = UDim2.fromOffset(14, 13),
-    Size = UDim2.new(1, -28, 0, 20),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.GothamBold,
-    Text = "AUTOMATION",
-    TextColor3 = COLORS.Muted,
-    TextSize = 10,
-    TextXAlignment = Enum.TextXAlignment.Left,
-}, sidebar)
-
-local content = create("Frame", {
-    Position = UDim2.fromOffset(sidebarWidth, 0),
-    Size = UDim2.new(1, -sidebarWidth, 1, 0),
-    BackgroundTransparency = 1,
-    ClipsDescendants = true,
-}, body)
-
-local navButtons = {}
-local pages = {}
-local activePage = "Macro"
-
-local function navButton(id, title, y)
-    local button = create("TextButton", {
-        Name = id,
-        Position = UDim2.fromOffset(10, y),
-        Size = UDim2.new(1, -20, 0, 40),
-        BackgroundColor3 = COLORS.Panel,
-        BorderSizePixel = 0,
-        AutoButtonColor = false,
-        Font = Enum.Font.GothamMedium,
-        Text = title,
-        TextColor3 = COLORS.Muted,
-        TextSize = compact and 11 or 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, sidebar)
-    corner(button, 8)
-
-    local pad = create("UIPadding", {
-        PaddingLeft = UDim.new(0, 12),
-    }, button)
-
-    navButtons[id] = button
-    return button
-end
-
-navButton("AutoFarm", "Auto Farm", 44)
-navButton("Macro", "Macro", 90)
-
-local currentDungeon = create("TextLabel", {
-    AnchorPoint = Vector2.new(0, 1),
-    Position = UDim2.new(0, 14, 1, -16),
-    Size = UDim2.new(1, -28, 0, 44),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.Gotham,
-    Text = "Current\n" .. tostring(DQR_WORLD and DQR_WORLD.Name or "Unknown"),
-    TextColor3 = COLORS.Muted,
-    TextSize = 10,
-    TextWrapped = true,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextYAlignment = Enum.TextYAlignment.Bottom,
-}, sidebar)
-
-local function pageBase(id, title, subtitle)
-    local page = create("ScrollingFrame", {
-        Name = id,
-        Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 4,
-        ScrollBarImageColor3 = COLORS.AccentSoft,
-        CanvasSize = UDim2.new(),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Visible = false,
-    }, content)
-
-    local layout = create("UIListLayout", {
-        Padding = UDim.new(0, 10),
-        FillDirection = Enum.FillDirection.Vertical,
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    }, page)
-
-    create("UIPadding", {
-        PaddingTop = UDim.new(0, 16),
-        PaddingBottom = UDim.new(0, 18),
-        PaddingLeft = UDim.new(0, compact and 12 or 18),
-        PaddingRight = UDim.new(0, compact and 12 or 18),
-    }, page)
-
-    local header = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 58),
-        BackgroundTransparency = 1,
-        LayoutOrder = 1,
-    }, page)
-
-    create("TextLabel", {
-        Size = UDim2.new(1, 0, 0, 28),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamBold,
-        Text = title,
-        TextColor3 = COLORS.Text,
-        TextSize = compact and 18 or 22,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, header)
-
-    create("TextLabel", {
-        Position = UDim2.fromOffset(0, 30),
-        Size = UDim2.new(1, 0, 0, 22),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.Gotham,
-        Text = subtitle or "",
-        TextColor3 = COLORS.Muted,
-        TextSize = compact and 10 or 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextWrapped = true,
-    }, header)
-
-    pages[id] = page
-    return page
-end
-
-local function section(parentPage, title, height, order)
-    local frame = create("Frame", {
-        Size = UDim2.new(1, 0, 0, height),
-        BackgroundColor3 = COLORS.Panel2,
-        BorderSizePixel = 0,
-        LayoutOrder = order,
-    }, parentPage)
-
-    corner(frame, 10)
-    stroke(frame, COLORS.Border, 0.45, 1)
-
-    create("TextLabel", {
-        Position = UDim2.fromOffset(14, 10),
-        Size = UDim2.new(1, -28, 0, 20),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamSemibold,
-        Text = title,
-        TextColor3 = COLORS.Text,
-        TextSize = compact and 11 or 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, frame)
-
-    return frame
-end
-
-local function actionButton(parentFrame, text, xScale, widthScale, y, accent)
-    local button = create("TextButton", {
-        Position = UDim2.new(xScale, 8, 0, y),
-        Size = UDim2.new(widthScale, -12, 0, 34),
-        BackgroundColor3 = accent and COLORS.AccentSoft or COLORS.Panel3,
-        BorderSizePixel = 0,
-        AutoButtonColor = true,
-        Font = Enum.Font.GothamMedium,
-        Text = text,
-        TextColor3 = COLORS.Text,
-        TextSize = compact and 10 or 12,
-    }, parentFrame)
-    corner(button, 7)
-    return button
-end
-
-local function valueLabel(parentFrame, label, y)
-    create("TextLabel", {
-        Position = UDim2.fromOffset(14, y),
-        Size = UDim2.new(0.48, -18, 0, 22),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.Gotham,
-        Text = label,
-        TextColor3 = COLORS.Muted,
-        TextSize = compact and 10 or 11,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, parentFrame)
-
-    local value = create("TextLabel", {
-        Position = UDim2.new(0.48, 0, 0, y),
-        Size = UDim2.new(0.52, -14, 0, 22),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamMedium,
-        Text = "—",
-        TextColor3 = COLORS.Text,
-        TextSize = compact and 10 or 11,
-        TextXAlignment = Enum.TextXAlignment.Right,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-    }, parentFrame)
-
-    return value
-end
-
-local autoPage = pageBase(
-    "AutoFarm",
-    "Auto Farm",
-    "Dungeon farming controls will be connected after the macro system is accepted."
-)
-
-local autoSection = section(autoPage, "Supported Maps", 146, 2)
-
-local function mapRow(name, y)
-    local row = create("Frame", {
-        Position = UDim2.fromOffset(14, y),
-        Size = UDim2.new(1, -28, 0, 42),
-        BackgroundColor3 = COLORS.Panel3,
-        BorderSizePixel = 0,
-    }, autoSection)
-    corner(row, 7)
-
-    create("TextLabel", {
-        Position = UDim2.fromOffset(12, 0),
-        Size = UDim2.new(1, -105, 1, 0),
-        BackgroundTransparency = 1,
-        Font = Enum.Font.GothamMedium,
-        Text = name,
-        TextColor3 = COLORS.Text,
-        TextSize = compact and 10 or 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, row)
-
-    create("TextLabel", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -10, 0.5, 0),
-        Size = UDim2.fromOffset(82, 24),
-        BackgroundColor3 = COLORS.Panel2,
-        BorderSizePixel = 0,
-        Font = Enum.Font.GothamMedium,
-        Text = "Not wired yet",
-        TextColor3 = COLORS.Warning,
-        TextSize = 9,
-    }, row)
-end
-
-mapRow("Samurai Palace", 40)
-mapRow("The Underworld", 88)
-
-local noteSection = section(autoPage, "Status", 76, 3)
-create("TextLabel", {
-    Position = UDim2.fromOffset(14, 36),
-    Size = UDim2.new(1, -28, 0, 28),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.Gotham,
-    Text = "No nonfunctional Auto Farm switch is exposed yet. The proven V1.4 engine remains unchanged.",
-    TextColor3 = COLORS.Muted,
-    TextSize = compact and 9 or 11,
-    TextWrapped = true,
-    TextXAlignment = Enum.TextXAlignment.Left,
-}, noteSection)
-
-local macroPage = pageBase(
-    "Macro",
-    "Macro",
-    "Record your route and actions, save named macros, replay once, or loop automatically."
-)
-
-local createSection = section(macroPage, "Create & Select", 158, 2)
-
-local nameBox = create("TextBox", {
-    Position = UDim2.fromOffset(14, 38),
-    Size = UDim2.new(1, -132, 0, 34),
-    BackgroundColor3 = COLORS.Panel3,
-    BorderSizePixel = 0,
-    ClearTextOnFocus = false,
-    Font = Enum.Font.Gotham,
-    PlaceholderText = "Macro name",
-    PlaceholderColor3 = COLORS.Muted,
-    Text = "",
-    TextColor3 = COLORS.Text,
-    TextSize = compact and 10 or 12,
-    TextXAlignment = Enum.TextXAlignment.Left,
-}, createSection)
-corner(nameBox, 7)
-create("UIPadding", {
-    PaddingLeft = UDim.new(0, 10),
-    PaddingRight = UDim.new(0, 10),
-}, nameBox)
-
-local createButton = create("TextButton", {
-    AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.new(1, -14, 0, 38),
-    Size = UDim2.fromOffset(104, 34),
-    BackgroundColor3 = COLORS.AccentSoft,
-    BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium,
-    Text = "Create Macro",
-    TextColor3 = COLORS.Text,
-    TextSize = compact and 9 or 11,
-}, createSection)
-corner(createButton, 7)
-
-local selectLabel = create("TextLabel", {
-    Position = UDim2.fromOffset(14, 82),
-    Size = UDim2.new(1, -28, 0, 18),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.Gotham,
-    Text = "Selected Macro",
-    TextColor3 = COLORS.Muted,
-    TextSize = 10,
-    TextXAlignment = Enum.TextXAlignment.Left,
-}, createSection)
-
-local dropdownButton = create("TextButton", {
-    Position = UDim2.fromOffset(14, 104),
-    Size = UDim2.new(1, -28, 0, 36),
-    BackgroundColor3 = COLORS.Panel3,
-    BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium,
-    Text = "No macros yet",
-    TextColor3 = COLORS.Text,
-    TextSize = compact and 10 or 12,
-    TextXAlignment = Enum.TextXAlignment.Left,
-}, createSection)
-corner(dropdownButton, 7)
-create("UIPadding", {
-    PaddingLeft = UDim.new(0, 10),
-    PaddingRight = UDim.new(0, 28),
-}, dropdownButton)
-
-local dropdownArrow = create("TextLabel", {
-    AnchorPoint = Vector2.new(1, 0.5),
-    Position = UDim2.new(1, -10, 0.5, 0),
-    Size = UDim2.fromOffset(18, 20),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.GothamBold,
-    Text = "⌄",
-    TextColor3 = COLORS.Muted,
-    TextSize = 14,
-    ZIndex = 25,
-}, dropdownButton)
-
-local dropdown = create("ScrollingFrame", {
-    Position = UDim2.fromOffset(14, 142),
-    Size = UDim2.new(1, -28, 0, 0),
-    BackgroundColor3 = COLORS.Panel3,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 3,
-    ScrollBarImageColor3 = COLORS.AccentSoft,
-    CanvasSize = UDim2.new(),
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    Visible = false,
-    ZIndex = 30,
-    ClipsDescendants = true,
-}, createSection)
-corner(dropdown, 7)
-stroke(dropdown, COLORS.Border, 0.1, 1)
-
-local dropdownLayout = create("UIListLayout", {
-    SortOrder = Enum.SortOrder.LayoutOrder,
-}, dropdown)
-
-local recordingSection = section(macroPage, "Recording & Playback", 124, 3)
-local recordButton = actionButton(recordingSection, "Start Recording", 0, 0.5, 38, true)
-local stopSaveButton = actionButton(recordingSection, "Stop & Save", 0.5, 0.5, 38, false)
-local playButton = actionButton(recordingSection, "Play Once", 0, 0.5, 80, false)
-local stopPlayButton = actionButton(recordingSection, "Stop Playback", 0.5, 0.5, 80, false)
-
-local autoSectionMacro = section(macroPage, "Auto Macro", 90, 4)
-
-local autoToggle = create("TextButton", {
-    Position = UDim2.fromOffset(14, 40),
-    Size = UDim2.new(1, -28, 0, 36),
-    BackgroundColor3 = COLORS.Panel3,
-    BorderSizePixel = 0,
-    AutoButtonColor = false,
-    Font = Enum.Font.GothamMedium,
-    Text = "Auto Macro    OFF",
-    TextColor3 = COLORS.Muted,
-    TextSize = compact and 10 or 12,
-}, autoSectionMacro)
-corner(autoToggle, 7)
-
-local manageSection = section(macroPage, "Manage", 82, 5)
-local deleteButton = actionButton(manageSection, "Delete Selected", 0, 0.5, 38, false)
-deleteButton.TextColor3 = COLORS.Danger
-local refreshButton = actionButton(manageSection, "Refresh List", 0.5, 0.5, 38, false)
-
-local statusSection = section(macroPage, "Macro Status", 190, 6)
-local statusValue = valueLabel(statusSection, "Status", 38)
-local selectedValue = valueLabel(statusSection, "Selected", 64)
-local durationValue = valueLabel(statusSection, "Duration", 90)
-local eventsValue = valueLabel(statusSection, "Recorded events", 116)
-local countValue = valueLabel(statusSection, "Saved macros", 142)
-local storageValue = valueLabel(statusSection, "Storage", 168)
-
-local function setPage(id)
-    activePage = id
-    for pageId, page in pairs(pages) do
-        page.Visible = pageId == id
+    if not ok or type(source) ~= "string" or source == "" then
+        error(
+            "[DQR UI] failed to download official Serenity UI: "
+            .. tostring(source)
+        )
     end
 
-    for buttonId, button in pairs(navButtons) do
-        local selected = buttonId == id
-        button.BackgroundColor3 = selected and COLORS.Panel3 or COLORS.Panel
-        button.TextColor3 = selected and COLORS.Text or COLORS.Muted
+    local chunk, compileError =
+        loadstring(
+            source,
+            "@SerenityDQR/serenity-v3.lua"
+        )
+
+    if not chunk then
+        error(
+            "[DQR UI] official Serenity UI compile failed: "
+            .. tostring(compileError)
+        )
     end
+
+    local runOk, Serenity = pcall(chunk)
+
+    if not runOk
+        or type(Serenity) ~= "table"
+        or type(Serenity.Build) ~= "function"
+    then
+        error(
+            "[DQR UI] official Serenity UI initialization failed: "
+            .. tostring(Serenity)
+        )
+    end
+
+    return Serenity
 end
 
-local function rebuildDropdown()
-    for _, child in ipairs(dropdown:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
+local Serenity = loadSerenity()
+
+local function macroOptions()
+    local list = Macro.List()
+
+    if #list == 0 then
+        return {"(No saved macros)"}
+    end
+
+    return list
+end
+
+local function selectedOption(options)
+    local status = Macro.Status()
+
+    if status.Selected then
+        for _, name in ipairs(options) do
+            if name == status.Selected then
+                return name
+            end
         end
     end
 
-    local names = Macro.List()
-    local status = Macro.Status()
-
-    dropdownButton.Text = status.Selected or (#names > 0 and names[1]) or "No macros yet"
-
-    local count = 0
-    for index, name in ipairs(names) do
-        count += 1
-        local item = create("TextButton", {
-            Size = UDim2.new(1, 0, 0, 32),
-            BackgroundColor3 = index % 2 == 0 and COLORS.Panel2 or COLORS.Panel3,
-            BorderSizePixel = 0,
-            Font = Enum.Font.Gotham,
-            Text = name,
-            TextColor3 = COLORS.Text,
-            TextSize = compact and 10 or 11,
-            ZIndex = 31,
-        }, dropdown)
-
-        track(item.MouseButton1Click:Connect(function()
-            Macro.Select(name)
-            dropdownButton.Text = name
-            dropdown.Visible = false
-            dropdown.Size = UDim2.new(1, -28, 0, 0)
-        end))
-    end
-
-    local height = math.min(160, math.max(34, count * 32))
-    dropdown:SetAttribute("OpenHeight", height)
+    return options[1]
 end
 
-local function updateStatus(status)
-    if not UI.Alive then
-        return
+local function currentDungeon()
+    local name = trim and trim(DQR_DUNGEON_NAME) or tostring(DQR_DUNGEON_NAME or "")
+    if name == "" then
+        return "Unknown / no dungeonName"
     end
-
-    status = status or Macro.Status()
-
-    statusValue.Text = status.Error and (status.Status .. " • " .. tostring(status.Error)) or status.Status
-    statusValue.TextColor3 =
-        status.Recording and COLORS.Warning
-        or status.Playing and COLORS.Accent
-        or status.Error and COLORS.Danger
-        or COLORS.Success
-
-    selectedValue.Text = status.Selected or "None"
-    durationValue.Text = string.format("%.1fs", tonumber(status.Duration) or 0)
-    eventsValue.Text = tostring(status.Events or 0)
-    countValue.Text = tostring(status.Count or 0)
-    storageValue.Text =
-        tostring(status.Storage)
-        .. (status.InputPlayback and " • input replay ready" or " • movement replay only")
-
-    autoToggle.Text = status.Auto and "Auto Macro    ON" or "Auto Macro    OFF"
-    autoToggle.BackgroundColor3 = status.Auto and COLORS.AccentSoft or COLORS.Panel3
-    autoToggle.TextColor3 = status.Auto and COLORS.Text or COLORS.Muted
-
-    if status.Selected then
-        dropdownButton.Text = status.Selected
-    end
+    return name
 end
 
-track(navButtons.AutoFarm.MouseButton1Click:Connect(function()
-    setPage("AutoFarm")
-end))
+local function farmStatusText()
+    if DQR_FARM_SUPPORTED then
+        return "Supported profile • " .. currentDungeon()
+    end
 
-track(navButtons.Macro.MouseButton1Click:Connect(function()
-    setPage("Macro")
-end))
+    return "Macro-only mode • " .. currentDungeon()
+end
 
-track(createButton.MouseButton1Click:Connect(function()
-    local ok = Macro.Create(nameBox.Text)
+local function actionResult(ok, value, successText)
     if ok then
-        nameBox.Text = ""
-        rebuildDropdown()
+        notify("Macro", successText or tostring(value or "Done"))
+        return true
     end
-    updateStatus()
-end))
 
-track(dropdownButton.MouseButton1Click:Connect(function()
-    rebuildDropdown()
-    local opening = not dropdown.Visible
-    dropdown.Visible = opening
-    dropdown.Size = opening
-        and UDim2.new(1, -28, 0, dropdown:GetAttribute("OpenHeight") or 80)
-        or UDim2.new(1, -28, 0, 0)
-end))
+    notify("Macro", tostring(value or "Action failed"))
+    return false
+end
 
-track(recordButton.MouseButton1Click:Connect(function()
-    Macro.StartRecording()
-    updateStatus()
-end))
+local function buildManifest()
+    local options = macroOptions()
+    local selected = selectedOption(options)
 
-track(stopSaveButton.MouseButton1Click:Connect(function()
-    Macro.StopRecording(true)
-    rebuildDropdown()
-    updateStatus()
-end))
+    return {
+        SerenityAPIVersion = 3,
+        ConfigVersion = 1,
+        RuntimeKey = "__SERENITY_DQR_OFFICIAL_UI_V2",
+        ConfigPath = "SerenityDQR/ui-v2.json",
+        GameName = "Dungeon Quest Reborn",
 
-track(playButton.MouseButton1Click:Connect(function()
-    Macro.PlayOnce()
-    updateStatus()
-end))
+        Pages = {
+            {
+                Id = "AutoFarm",
+                Title = "Auto Farm",
+                Icon = "bot",
+                Description =
+                    "Dungeon farming profiles are enabled only on validated maps.",
+                Features = {
+                    {
+                        Id = "Availability",
+                        Title = "Auto Farm",
+                        Description =
+                            "Current support and validated dungeon profiles.",
+                        Accent = "cyan",
+                        Expanded = true,
+                        Controls = {
+                            {
+                                Id = "CurrentMode",
+                                Type = "Live",
+                                Title = "Current Mode",
+                                Value = farmStatusText(),
+                            },
+                            {
+                                Id = "CurrentPlace",
+                                Type = "Live",
+                                Title = "Place ID",
+                                Value = tostring(game.PlaceId),
+                            },
+                            {
+                                Type = "Paragraph",
+                                Title = "Supported Maps",
+                                Text =
+                                    "Samurai Palace\n"
+                                    .. "The Underworld",
+                            },
+                            {
+                                Type = "Paragraph",
+                                Title = "Auto Farm controls",
+                                Text =
+                                    "The proven farm engine is preserved. "
+                                    .. "No new Auto Farm switch is exposed in this UI yet.",
+                            },
+                        },
+                    },
+                },
+            },
 
-track(stopPlayButton.MouseButton1Click:Connect(function()
-    Macro.StopPlayback()
-    updateStatus()
-end))
+            {
+                Id = "Macro",
+                Title = "Macro",
+                Icon = "route",
+                Description =
+                    "Record movement and actions in any Dungeon Quest place.",
+                Features = {
+                    {
+                        Id = "Library",
+                        Title = "Macro Library",
+                        Description =
+                            "Create, select, refresh, and delete named macros.",
+                        Accent = "purple",
+                        Expanded = true,
+                        Controls = {
+                            {
+                                Id = "MacroName",
+                                Type = "Input",
+                                Title = "Macro Name",
+                                Description =
+                                    "Name for a new macro.",
+                                Default = "",
+                                Placeholder = "Example: Canals Route 1",
+                                Changed = function(value)
+                                    UI.DraftName = tostring(value or "")
+                                end,
+                            },
+                            {
+                                Id = "Create",
+                                Type = "Action",
+                                Title = "Create Macro",
+                                Description =
+                                    "Create an empty named macro and select it.",
+                                ButtonText = "CREATE",
+                                Callback = function()
+                                    local ok, result =
+                                        Macro.Create(UI.DraftName)
 
-track(autoToggle.MouseButton1Click:Connect(function()
-    local status = Macro.Status()
-    Macro.SetAuto(not status.Auto)
-    updateStatus()
-end))
+                                    if actionResult(
+                                        ok,
+                                        result,
+                                        "Macro created"
+                                    ) then
+                                        UI:ScheduleRebuild()
+                                    end
+                                end,
+                            },
+                            {
+                                Id = "SelectedMacro",
+                                Type = "Select",
+                                Title = "Selected Macro",
+                                Description =
+                                    "Choose which saved macro to record or play.",
+                                Options = options,
+                                Default = selected,
+                                Changed = function(value)
+                                    if value ~= "(No saved macros)" then
+                                        Macro.Select(value)
+                                    end
+                                end,
+                            },
+                            {
+                                Id = "Refresh",
+                                Type = "Action",
+                                Title = "Refresh Macro List",
+                                Description =
+                                    "Reload saved macro names from storage.",
+                                ButtonText = "REFRESH",
+                                Callback = function()
+                                    Macro.Refresh()
+                                    notify("Macro", "Macro list refreshed")
+                                    UI:ScheduleRebuild()
+                                end,
+                            },
+                            {
+                                Id = "Delete",
+                                Type = "Action",
+                                Title = "Delete Selected Macro",
+                                Description =
+                                    "Delete the currently selected saved macro.",
+                                Danger = true,
+                                Confirm = true,
+                                ConfirmText = "Delete this macro?",
+                                ButtonText = "DELETE",
+                                Callback = function()
+                                    local ok, err = Macro.Delete()
 
-track(deleteButton.MouseButton1Click:Connect(function()
-    Macro.Delete()
-    rebuildDropdown()
-    updateStatus()
-end))
+                                    if actionResult(
+                                        ok,
+                                        err,
+                                        "Macro deleted"
+                                    ) then
+                                        UI:ScheduleRebuild()
+                                    end
+                                end,
+                            },
+                        },
+                    },
 
-track(refreshButton.MouseButton1Click:Connect(function()
-    Macro.Refresh()
-    rebuildDropdown()
-    updateStatus()
-end))
+                    {
+                        Id = "Recorder",
+                        Title = "Recorder",
+                        Description =
+                            "Capture your route, camera, jumps, and supported input actions.",
+                        Accent = "mint",
+                        Expanded = true,
+                        Controls = {
+                            {
+                                Id = "StartRecording",
+                                Type = "Action",
+                                Title = "Start Recording",
+                                Description =
+                                    "Begin recording the selected macro from your current position.",
+                                ButtonText = "RECORD",
+                                Callback = function()
+                                    local ok, err =
+                                        Macro.StartRecording()
+                                    actionResult(
+                                        ok,
+                                        err,
+                                        "Recording started"
+                                    )
+                                end,
+                            },
+                            {
+                                Id = "StopSave",
+                                Type = "Action",
+                                Title = "Stop & Save",
+                                Description =
+                                    "Stop recording and save the captured macro.",
+                                ButtonText = "SAVE",
+                                Callback = function()
+                                    local ok, err =
+                                        Macro.StopRecording(true)
+                                    actionResult(
+                                        ok,
+                                        err,
+                                        "Recording saved"
+                                    )
+                                end,
+                            },
+                            {
+                                Id = "PlayOnce",
+                                Type = "Action",
+                                Title = "Play Once",
+                                Description =
+                                    "Replay the selected macro one time.",
+                                ButtonText = "PLAY",
+                                Callback = function()
+                                    local ok, err =
+                                        Macro.PlayOnce()
+                                    actionResult(
+                                        ok,
+                                        err,
+                                        "Playback started"
+                                    )
+                                end,
+                            },
+                            {
+                                Id = "StopPlayback",
+                                Type = "Action",
+                                Title = "Stop Playback",
+                                Description =
+                                    "Stop a running one-shot or automatic macro.",
+                                ButtonText = "STOP",
+                                Callback = function()
+                                    local ok = Macro.StopPlayback()
 
-local minimized = false
-local previousSize = main.Size
+                                    if ok then
+                                        notify(
+                                            "Macro",
+                                            "Playback stopped"
+                                        )
+                                    else
+                                        notify(
+                                            "Macro",
+                                            "No macro playback is active"
+                                        )
+                                    end
+                                end,
+                            },
+                        },
+                    },
 
-track(minimize.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    body.Visible = not minimized
-    minimize.Text = minimized and "+" or "—"
+                    {
+                        Id = "Automation",
+                        Title = "Auto Macro",
+                        Description =
+                            "Continuously repeat the selected recorded macro.",
+                        Accent = "cyan",
+                        Expanded = true,
+                        Controls = {
+                            {
+                                Id = "Auto",
+                                Type = "Switch",
+                                Title = "Auto Macro",
+                                Description =
+                                    "Loop the selected macro until disabled.",
+                                Default = false,
+                                Changed = function(value, window, adapter)
+                                    local ok, err =
+                                        Macro.SetAuto(value == true)
 
-    if minimized then
-        previousSize = main.Size
-        main.Size = UDim2.new(previousSize.X.Scale, previousSize.X.Offset, 0, 48)
-    else
-        main.Size = previousSize
-    end
-end))
+                                    if not ok then
+                                        notify(
+                                            "Macro",
+                                            tostring(err or "Unable to start Auto Macro")
+                                        )
 
-local dragging = false
-local dragStart
-local startPosition
-local dragInput
+                                        local control =
+                                            adapter
+                                            and adapter.Controls
+                                            and adapter.Controls[
+                                                "Macro.Automation.Auto"
+                                            ]
 
-track(topbar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch
-    then
-        dragging = true
-        dragStart = input.Position
-        startPosition = main.Position
-        dragInput = input
-    end
-end))
+                                        if control
+                                            and type(control.Set) == "function"
+                                        then
+                                            pcall(
+                                                control.Set,
+                                                control,
+                                                false,
+                                                true
+                                            )
+                                        end
+                                    end
+                                end,
+                            },
+                        },
+                    },
 
-track(topbar.InputEnded:Connect(function(input)
-    if input == dragInput then
-        dragging = false
-        dragInput = nil
-    end
-end))
+                    {
+                        Id = "Status",
+                        Title = "Status",
+                        Description =
+                            "Live macro state and executor capability.",
+                        Accent = "purple",
+                        Expanded = true,
+                        Controls = {
+                            {
+                                Id = "State",
+                                Type = "Live",
+                                Title = "Status",
+                                Value = "Idle",
+                            },
+                            {
+                                Id = "Selected",
+                                Type = "Live",
+                                Title = "Selected",
+                                Value = "None",
+                            },
+                            {
+                                Id = "Duration",
+                                Type = "Live",
+                                Title = "Duration",
+                                Value = "0.0s",
+                            },
+                            {
+                                Id = "Events",
+                                Type = "Live",
+                                Title = "Recorded Events",
+                                Value = "0",
+                            },
+                            {
+                                Id = "Saved",
+                                Type = "Live",
+                                Title = "Saved Macros",
+                                Value = "0",
+                            },
+                            {
+                                Id = "Storage",
+                                Type = "Live",
+                                Title = "Storage",
+                                Value = "Checking...",
+                            },
+                            {
+                                Id = "RecordedPlace",
+                                Type = "Live",
+                                Title = "Current Place",
+                                Value = tostring(game.PlaceId),
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+end
 
-track(game:GetService("UserInputService").InputChanged:Connect(function(input)
-    if not dragging or not dragStart or not startPosition then
+function UI:UpdateLive()
+    local app = self.App
+    local adapter = app and app.Adapter
+
+    if not adapter or type(adapter.SetLive) ~= "function" then
         return
     end
 
-    if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch
-    then
-        local delta = input.Position - dragStart
-        main.Position = UDim2.new(
-            startPosition.X.Scale,
-            startPosition.X.Offset + delta.X,
-            startPosition.Y.Scale,
-            startPosition.Y.Offset + delta.Y
-        )
-    end
-end))
+    local status = Macro.Status()
 
-Macro.IsPointOverUI = function(pos)
-    if not UI.Alive or not main.Visible then
+    adapter:SetLive(
+        "AutoFarm.Availability.CurrentMode",
+        farmStatusText()
+    )
+
+    adapter:SetLive(
+        "AutoFarm.Availability.CurrentPlace",
+        tostring(game.PlaceId)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.State",
+        status.Error
+        and (
+            tostring(status.Status)
+            .. " • "
+            .. tostring(status.Error)
+        )
+        or tostring(status.Status)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Selected",
+        tostring(status.Selected or "None")
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Duration",
+        string.format(
+            "%.1fs",
+            tonumber(status.Duration) or 0
+        )
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Events",
+        tostring(status.Events or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Saved",
+        tostring(status.Count or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Storage",
+        tostring(status.Storage)
+        .. (
+            status.InputPlayback
+            and " • input replay ready"
+            or " • route replay only"
+        )
+    )
+
+    adapter:SetLive(
+        "Macro.Status.RecordedPlace",
+        tostring(game.PlaceId)
+    )
+end
+
+function UI:Build()
+    if not self.Alive then
+        return
+    end
+
+    self.Generation += 1
+    local generation = self.Generation
+
+    if self.App and type(self.App.Destroy) == "function" then
+        pcall(self.App.Destroy, self.App)
+    end
+
+    local manifest = buildManifest()
+
+    local ok, appOrError = xpcall(
+        function()
+            return Serenity.Build(
+                manifest,
+                {
+                    RuntimeKey =
+                        "__SERENITY_DQR_OFFICIAL_UI_V2",
+                    ConfigPath =
+                        "SerenityDQR/ui-v2.json",
+                }
+            )
+        end,
+        debug.traceback
+    )
+
+    if not ok then
+        warn(
+            "[DQR UI] official Serenity build failed: "
+            .. tostring(appOrError)
+        )
+        self.App = nil
+        return
+    end
+
+    self.App = appOrError
+
+    -- UI controls are never macro input. This prevents Stop & Save / Play /
+    -- dropdown clicks from becoming recorded mouse actions.
+    Macro.IsPointOverUI = function(position)
+        local okObjects, objects =
+            pcall(
+                GuiService.GetGuiObjectsAtPosition,
+                GuiService,
+                position.X,
+                position.Y
+            )
+
+        if not okObjects or type(objects) ~= "table" then
+            return false
+        end
+
+        for _, object in ipairs(objects) do
+            local current = object
+
+            while current do
+                if current:IsA("ScreenGui")
+                    and current.Name == "SerenityConcept02"
+                then
+                    return true
+                end
+
+                current = current.Parent
+            end
+        end
+
         return false
     end
 
-    local p = main.AbsolutePosition
-    local s = main.AbsoluteSize
+    local autoControl =
+        self.App.Adapter
+        and self.App.Adapter.Controls
+        and self.App.Adapter.Controls[
+            "Macro.Automation.Auto"
+        ]
 
-    return pos.X >= p.X
-        and pos.X <= p.X + s.X
-        and pos.Y >= p.Y
-        and pos.Y <= p.Y + s.Y
+    -- Automations always start OFF even if an old UI config happened to save ON.
+    if autoControl and type(autoControl.Set) == "function" then
+        pcall(
+            autoControl.Set,
+            autoControl,
+            false,
+            false
+        )
+    end
+
+    self:UpdateLive()
+
+    task.spawn(function()
+        while UI.Alive
+            and UI.Generation == generation
+            and UI.App == appOrError
+        do
+            UI:UpdateLive()
+            task.wait(0.25)
+        end
+    end)
 end
 
-local detachStatus = Macro.OnChanged(function(status)
-    updateStatus(status)
-end)
-
-function UI.Destroy()
-    if not UI.Alive then
+function UI:ScheduleRebuild()
+    if self.RebuildQueued or not self.Alive then
         return
     end
 
-    UI.Alive = false
+    self.RebuildQueued = true
 
-    if detachStatus then
-        pcall(detachStatus)
+    task.defer(function()
+        task.wait()
+
+        if not UI.Alive then
+            return
+        end
+
+        UI.RebuildQueued = false
+        UI:Build()
+    end)
+end
+
+function UI:Destroy()
+    if not self.Alive then
+        return
     end
+
+    self.Alive = false
+    self.Generation += 1
 
     if Macro.IsPointOverUI then
         Macro.IsPointOverUI = nil
     end
 
-    for _, connection in ipairs(UI.Connections) do
-        pcall(function()
-            connection:Disconnect()
-        end)
-    end
-    table.clear(UI.Connections)
-
-    if gui then
-        pcall(function()
-            gui:Destroy()
-        end)
+    if self.App and type(self.App.Destroy) == "function" then
+        pcall(self.App.Destroy, self.App)
     end
 
-    if UIEnv[UI_KEY] == UI then
-        UIEnv[UI_KEY] = nil
+    self.App = nil
+
+    if ENV[UI_KEY] == self then
+        ENV[UI_KEY] = nil
     end
 end
 
-track(close.MouseButton1Click:Connect(UI.Destroy))
+UI:Build()
 
-task.spawn(function()
-    while UI.Alive do
-        updateStatus()
-        task.wait(0.25)
-    end
-end)
-
-rebuildDropdown()
-updateStatus()
-setPage("Macro")
-
-UIEnv[UI_KEY] = UI
-Runtime.DQRUI = UI
+ENV[UI_KEY] = UI
+DQR_UI = UI
