@@ -674,6 +674,155 @@ Runtime.AzrallikSpreadTellCandidate = function(
 end
 
 
+Runtime.MiyamotoBeamPremovementCandidate = function()
+    if Runtime.ActiveBossName ~= "Miyamoto Musashi"
+        or not Runtime.Root
+        or not Runtime.ActiveBossRoot
+    then
+        return nil
+    end
+
+    local origin = Runtime.Root.Position
+    local bossPosition = Runtime.ActiveBossRoot.Position
+
+    local radial =
+        unitHorizontal(
+            origin - bossPosition
+        )
+
+    if radial.Magnitude < 0.01 then
+        radial = Vector3.new(1, 0, 0)
+    end
+
+    local tangent =
+        Vector3.new(
+            -radial.Z,
+            0,
+            radial.X
+        )
+
+    local toward =
+        unitHorizontal(
+            bossPosition - origin
+        )
+
+    local desiredRange =
+        CFG.BOSS_DESIRED_RANGE[
+            "Miyamoto Musashi"
+        ] or 28
+
+    local currentBossDistance =
+        horizontalDistance(
+            origin,
+            bossPosition
+        )
+
+    local inwardBias =
+        currentBossDistance
+            > desiredRange + 8
+        and 0.20
+        or 0.05
+
+    local best
+    local bestScore = math.huge
+
+    for _, step in ipairs(
+        CFG.MIYAMOTO_BEAM_PREMOVE_STEPS
+    ) do
+        for _, sign in ipairs({1, -1}) do
+            local direction =
+                unitHorizontal(
+                    tangent * sign
+                    + toward * inwardBias
+                )
+
+            local candidate =
+                origin + direction * step
+
+            local candidateSafe =
+                safeMovementDestination(
+                    candidate,
+                    origin
+                )
+
+            if candidateSafe
+                and not movementWallHit(
+                    origin,
+                    candidate
+                )
+            then
+                local danger,
+                    inside,
+                    clearance =
+                        pointDanger(candidate)
+
+                local crossing =
+                    routeDanger(
+                        origin,
+                        candidate
+                    )
+
+                local physicalPenalty =
+                    wavePhysicalPenalty(
+                        candidate
+                    )
+
+                local candidateBossDistance =
+                    horizontalDistance(
+                        candidate,
+                        bossPosition
+                    )
+
+                if inside == 0
+                    and crossing
+                        <= CFG.MIYAMOTO_BEAM_PREMOVE_ROUTE_MAX
+                    and candidateBossDistance
+                        <= CFG.MIYAMOTO_ARENA_LEASH
+                then
+                    local score =
+                        danger * 0.05
+                        + crossing * 0.05
+                        + physicalPenalty
+                        + math.abs(
+                            candidateBossDistance
+                            - desiredRange
+                        ) * CFG.MIYAMOTO_BEAM_PREMOVE_RANGE_WEIGHT
+                        + step * 60
+                        + (
+                            sign == Runtime.OrbitSign
+                            and 0
+                            or 120
+                        )
+
+                    if clearance ~= math.huge then
+                        score -=
+                            math.min(
+                                math.max(clearance, 0),
+                                16
+                            ) * 60
+                    end
+
+                    if score < bestScore then
+                        bestScore = score
+                        best = {
+                            Position = candidate,
+                            Radius = step,
+                            Score = score,
+                            Inside = inside,
+                            Clearance = clearance,
+                            Label = "miyamoto_beam_premove",
+                            Source = "MiyamotoBeamTell",
+                        }
+                    end
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+
 Runtime.SamuraiLocalGapCandidate = function(
     bossThreats,
     attackName,
