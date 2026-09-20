@@ -704,6 +704,21 @@ Runtime.SamuraiLocalGapCandidate = function(
     local currentPhysicalPenalty =
         wavePhysicalPenalty(origin)
 
+    local bossPosition =
+        Runtime.ActiveBossRoot.Position
+
+    local currentBossDistance =
+        horizontalDistance(
+            origin,
+            bossPosition
+        )
+
+    local desiredBossRange =
+        CFG.BOSS_DESIRED_RANGE[
+            Runtime.ActiveBossName
+        ]
+        or 28
+
     local denseMiyamoto =
         Runtime.ActiveBossName
             == "Miyamoto Musashi"
@@ -735,13 +750,14 @@ Runtime.SamuraiLocalGapCandidate = function(
     -- failure in the two Modular V1 runs.
     if currentInside == 0
         and currentPhysicalPenalty <= 0
+        and currentBossDistance
+            <= desiredBossRange
+                + CFG.SAMURAI_BOSS_GAP_MAX_HOLD_EXTRA
         and not (
             Runtime.ActiveBossName
                 == "Miyamoto Musashi"
-            and horizontalDistance(
-                origin,
-                Runtime.ActiveBossRoot.Position
-            ) > CFG.MIYAMOTO_ARENA_LEASH
+            and currentBossDistance
+                > CFG.MIYAMOTO_ARENA_LEASH
         )
         and (
             currentClearance
@@ -766,15 +782,6 @@ Runtime.SamuraiLocalGapCandidate = function(
                 or "SamuraiPalaceExactGap",
         }
     end
-
-    local bossPosition =
-        Runtime.ActiveBossRoot.Position
-
-    local currentBossDistance =
-        horizontalDistance(
-            origin,
-            bossPosition
-        )
 
     local radii =
         denseMiyamoto
@@ -849,53 +856,55 @@ Runtime.SamuraiLocalGapCandidate = function(
                             bossPosition
                         )
 
-                    local inward =
+                    local rangeError =
+                        math.abs(
+                            candidateBossDistance
+                            - desiredBossRange
+                        )
+
+                    local retreat =
+                        math.max(
+                            0,
+                            candidateBossDistance
+                            - currentBossDistance
+                        )
+
+                    local approach =
                         math.max(
                             0,
                             currentBossDistance
                             - candidateBossDistance
                         )
 
-                    local rangePenalty = 0
+                    local rangePenalty =
+                        rangeError
+                            * CFG.SAMURAI_BOSS_GAP_RANGE_WEIGHT
+                        + retreat
+                            * CFG.SAMURAI_BOSS_GAP_RETREAT_WEIGHT
+                        - approach
+                            * CFG.SAMURAI_BOSS_GAP_APPROACH_REWARD
 
-                    if Runtime.ActiveBossName
-                        == "Miyamoto Musashi"
+                    local hardLeash =
+                        Runtime.ActiveBossName
+                            == "Miyamoto Musashi"
+                        and CFG.MIYAMOTO_ARENA_LEASH
+                        or CFG.SAMURAI_BOSS_GAP_HARD_LEASH
+
+                    if candidateBossDistance
+                        > hardLeash
                     then
-                        -- Do not solve Miyamoto by continuously retreating.
-                        -- Stay near the real damage envelope and inside the
-                        -- observed arena while still prioritizing geometry.
-                        inward = 0
-
-                        local desiredBossRange =
-                            CFG.BOSS_DESIRED_RANGE[
-                                "Miyamoto Musashi"
-                            ]
-                            or 28
-
                         rangePenalty +=
-                            math.abs(
+                            180000
+                            + (
                                 candidateBossDistance
-                                - desiredBossRange
-                            ) * 220
-
-                        if candidateBossDistance
-                            > CFG.MIYAMOTO_ARENA_LEASH
-                        then
-                            rangePenalty +=
-                                150000
-                                + (
-                                    candidateBossDistance
-                                    - CFG.MIYAMOTO_ARENA_LEASH
-                                )
-                                * CFG.MIYAMOTO_ARENA_LEASH_PENALTY
-                        end
+                                - hardLeash
+                            ) * 10000
                     end
 
                     local score =
                         danger * 0.05
-                        + radius * 150
+                        + radius * 110
                         + crossing * 0.05
-                        + inward * 420
                         + rangePenalty
                         + physicalPenalty
                             * CFG.SAMURAI_LOCAL_GAP_PHYSICAL_WEIGHT
