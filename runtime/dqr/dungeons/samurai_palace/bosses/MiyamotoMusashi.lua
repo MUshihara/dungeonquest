@@ -5,9 +5,11 @@ return {
     Attacks={"flameShurikenHit","flameBeam","doubleFlameBeam","Flame Cyclone"},
     Rules={
         "observe client event only; never FireServer it",
-        "doubleFlameBeam uses hold/local-gap behavior",
-        "dense doubleBeam + flameShuriken/flameBeam requires larger true clearance",
-        "Ultimate Swordsman physical pressure participates in gap scoring",
+        "flameBeams warning may trigger one short ordinary lateral premove",
+        "flame/double-beam local gaps commit to one validated pocket until new geometry invalidates it",
+        "Flame Cyclone is one moving radial hazard, not dozens of crescent threats",
+        "endFireCyclone/hideFire suppress stale Cyclone recreation",
+        "Ultimate Swordsman physical pressure participates in pocket validation",
         "keep boss as majority offensive target",
     },
 }
