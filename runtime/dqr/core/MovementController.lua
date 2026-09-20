@@ -21,6 +21,14 @@ function isLevelRouteMove(reason)
         == "COMBAT_APPROACH_LEVEL"
 end
 
+function isPathfinderRouteMove(reason)
+    reason = tostring(reason or "")
+
+    return
+        reason == "COMBAT_APPROACH_PATH"
+        or reason == "COMBAT_APPROACH_LEVEL"
+end
+
 function isThreatSolverMove(reason)
     reason = tostring(reason or "")
 
@@ -189,12 +197,15 @@ moveTo = function(position, reason)
     local requested = position
     local levelRouteMove =
         isLevelRouteMove(reason)
+    local pathfinderRouteMove =
+        isPathfinderRouteMove(reason)
 
     local safeRequested, rejectReason =
         safeMovementDestination(
             requested,
             Runtime.Root.Position,
-            levelRouteMove
+            levelRouteMove,
+            pathfinderRouteMove
         )
 
     if not safeRequested
@@ -264,10 +275,10 @@ moveTo = function(position, reason)
         return
     end
 
-    -- Pathfinding owns wall routing for cross-floor travel. Do not flatten a
-    -- legitimate stair/ramp waypoint into a same-Y combat wall sidestep.
+    -- Pathfinding owns wall routing for every validated approach waypoint.
+    -- Do not flatten its bridge/stair/corridor route into a combat wall slide.
     local resolved =
-        levelRouteMove
+        pathfinderRouteMove
         and requested
         or resolveWallAwareDestination(
             Runtime.Root.Position,
@@ -279,7 +290,8 @@ moveTo = function(position, reason)
         safeMovementDestination(
             resolved,
             Runtime.Root.Position,
-            levelRouteMove
+            levelRouteMove,
+            pathfinderRouteMove
         )
 
     if not safeResolved
