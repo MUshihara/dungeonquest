@@ -141,7 +141,7 @@ ENV.DQR = {
 }
 
 logKV("START", {
-    version = "Modular_V1_1",
+    version = "Modular_V1_2",
     dungeon = DQR_WORLD and DQR_WORLD.Name or "Unknown",
     style = CFG.STYLE,
     place_id = game.PlaceId,
@@ -172,6 +172,11 @@ logKV("START", {
     miyamoto_client_event_observer = true,
     miyamoto_doublebeam_local_gap = true,
     miyamoto_dense_overlap_guard = true,
+    miyamoto_cyclone_collapsed = true,
+    miyamoto_arena_leash = CFG.MIYAMOTO_ARENA_LEASH,
+    golem_small_landing_memory = true,
+    pathfinder_waypoint_trust = true,
+    shuriken_short_axis_escape = true,
 
     direct_shift_governor = true,
     direct_shift_cooldown =
