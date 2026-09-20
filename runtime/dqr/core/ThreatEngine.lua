@@ -96,13 +96,10 @@ function classifyThreatPart(part)
         end
     end
 
-    -- Samurai Palace explosion/cyclone objects do not expose the same
-    -- precast/hitBox naming as the line attacks. Their visible/touchable
-    -- pieces are still legitimate live geometry observed in the recon.
-    if top.Name == "Flame Cyclone"
-        and part.Name == "crescent"
-    then
-        return "ActiveHitbox"
+    -- Flame Cyclone is collapsed to one moving virtual zone in
+    -- registerThreat(); never register its 36 crescent pieces separately.
+    if top.Name == "Flame Cyclone" then
+        return nil
     end
 
     local lowerTop = string.lower(top.Name)
@@ -121,6 +118,95 @@ function registerThreat(part)
     if Runtime.Threats[part] then return end
 
     local top = topWorkspaceChild(part)
+
+    -- Miyamoto Flame Cyclone is one encounter hazard represented by dozens of
+    -- crescent parts. Tracking all crescents produced 35-43 "threat" waves and
+    -- unstable 40+ stud plans. Collapse the model to one moving radial zone.
+    if top
+        and top.Name == "Flame Cyclone"
+        and top:IsA("Model")
+    then
+        Runtime.WatchedCyclones =
+            Runtime.WatchedCyclones or {}
+
+        local primary =
+            top.PrimaryPart
+            or top:FindFirstChild(
+                "PrimaryPart",
+                true
+            )
+
+        if primary
+            and primary:IsA("BasePart")
+        then
+            if not Runtime.WatchedCyclones[top] then
+                Runtime.WatchedCyclones[top] = true
+
+                local function refreshCyclone()
+                    if top.Parent
+                        and primary.Parent
+                    then
+                        addVirtualThreat(
+                            top,
+                            primary.Position,
+                            CFG.MIYAMOTO_CYCLONE_RADIUS,
+                            CFG.MIYAMOTO_CYCLONE_LIFETIME,
+                            "Flame Cyclone"
+                        )
+                    end
+                end
+
+                refreshCyclone()
+
+                connect(
+                    primary:GetPropertyChangedSignal(
+                        "CFrame"
+                    ),
+                    refreshCyclone
+                )
+
+                connect(
+                    top.AncestryChanged,
+                    function(_, parent)
+                        if parent == nil then
+                            Runtime.WatchedCyclones[top] = nil
+                            Runtime.VirtualThreats[top] = nil
+                        end
+                    end
+                )
+            else
+                addVirtualThreat(
+                    top,
+                    primary.Position,
+                    CFG.MIYAMOTO_CYCLONE_RADIUS,
+                    CFG.MIYAMOTO_CYCLONE_LIFETIME,
+                    "Flame Cyclone"
+                )
+            end
+        end
+
+        return
+    end
+
+    -- The eight small Golem rocks are followed by near-immediate small
+    -- explosions after their ~1.1s rock lifetime. Keep each landing position
+    -- dangerous through that handoff instead of learning the explosion only
+    -- when its VFX appears.
+    if top
+        and top.Name == "golemRockThrowSmall"
+        and (
+            part.Name == "precast"
+            or part.Name == "hitBox"
+        )
+    then
+        addVirtualThreat(
+            top,
+            part.Position,
+            CFG.GOLEM_SMALL_LANDING_RADIUS,
+            CFG.GOLEM_SMALL_LANDING_LIFETIME,
+            "Golem Small Landing"
+        )
+    end
 
     -- Golem explosion effects contain many flame MeshParts (up to dozens per
     -- explosion). Treat each explosion root as ONE short-lived radial virtual
