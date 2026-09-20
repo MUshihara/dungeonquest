@@ -1,33 +1,55 @@
--- DQR universal character-movement macro controller.
--- Records and replays only character movement + jumps. No camera, mouse,
--- keyboard, screen/UI, or ability input is captured.
+-- DQR universal semantic macro controller.
+--
+-- Records:
+--   * character route (adaptive / low-overhead)
+--   * jumps
+--   * basic weapon attacks
+--   * Q/E ability casts
+--
+-- It intentionally does NOT record the screen, camera, mouse coordinates,
+-- raw keyboard input, or UI interaction.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
-local MACRO_KEY = "__SERENITY_DQR_MACRO_V3"
+local MACRO_KEY = "__SERENITY_DQR_MACRO_V4"
 
 local ROOT_DIR = "SerenityDQR"
 local MACRO_DIR = ROOT_DIR .. "/macros"
 local INDEX_PATH = MACRO_DIR .. "/index.json"
 
--- Recording is distance-driven so the route stays compact without losing
--- corners. A timed keepalive preserves pauses / slow sections.
-local SAMPLE_CHECK_INTERVAL = 0.05
-local SAMPLE_MIN_DISTANCE = 1.25
-local SAMPLE_MAX_INTERVAL = 0.30
-local SAMPLE_VERTICAL_TRIGGER = 0.70
+-- ------------------------------------------------------------
+-- Recording
+-- ------------------------------------------------------------
+-- Heartbeat only checks position at this interval. It writes nothing unless
+-- distance, vertical movement, or a meaningful turn warrants a new waypoint.
+local SAMPLE_CHECK_INTERVAL = 0.065
+local SAMPLE_MIN_DISTANCE = 2.20
+local SAMPLE_CORNER_MIN_DISTANCE = 0.70
+local SAMPLE_CORNER_DOT = 0.90
+local SAMPLE_VERTICAL_TRIGGER = 0.65
 
--- Playback stays on ordinary Humanoid movement.
-local WAYPOINT_REACH_RADIUS = 2.35
-local WAYPOINT_VERTICAL_RADIUS = 4.50
+-- An action always forces one exact movement sample immediately beforehand.
+local ACTION_DEDUPE_WINDOW = 0.10
+local SKILL_ANIMATION_DEDUPE_WINDOW = 0.18
+
+-- ------------------------------------------------------------
+-- Playback
+-- ------------------------------------------------------------
+local WAYPOINT_REACH_RADIUS = 3.0
+local WAYPOINT_VERTICAL_RADIUS = 5.0
+local ROUTE_LOOKAHEAD_POINTS = 2
 local STUCK_CHECK_INTERVAL = 0.12
-local STUCK_WINDOW = 0.65
-local STUCK_PROGRESS_EPSILON = 0.35
+local STUCK_WINDOW = 0.70
+local STUCK_PROGRESS_EPSILON = 0.45
+local WAYPOINT_TIMEOUT_MIN = 0.55
+local WAYPOINT_TIMEOUT_MAX = 4.0
 local AUTO_LOOP_DELAY = 0.75
+local SKILL_READY_GRACE = 0.55
 
 local canRead = type(readfile) == "function"
 local canWrite = type(writefile) == "function"
@@ -41,6 +63,7 @@ local MacroController = {}
 
 local state = {
     Alive = true,
+
     Macros = {},
     Selected = nil,
 
@@ -51,12 +74,20 @@ local state = {
     Status = "Idle",
     Storage = persistentStorage and "Persistent" or "Session only",
     LastError = nil,
+    LastAction = "None",
 
     RecordingStartedAt = 0,
     RecordConnections = {},
     RecordAccumulator = 0,
+
     LastSamplePosition = nil,
+    PreviousSamplePosition = nil,
     LastSampleAt = -math.huge,
+
+    LastSkillRecordedAt = -math.huge,
+    LastAttackRecordedAt = -math.huge,
+
+    WatchedAbilityTools = {},
 
     PlayToken = 0,
 
@@ -68,6 +99,7 @@ local listeners = {}
 
 local old =
     ENV[MACRO_KEY]
+    or ENV.__SERENITY_DQR_MACRO_V3
     or ENV.__SERENITY_DQR_MACRO_V2
     or ENV.__SERENITY_DQR_MACRO_V1
 
@@ -76,6 +108,10 @@ if old and type(old.Destroy) == "function" then
 elseif old and type(old.StopAll) == "function" then
     pcall(old.StopAll, "reexecute")
 end
+
+-- ------------------------------------------------------------
+-- Common
+-- ------------------------------------------------------------
 
 local function emit()
     local snapshot = MacroController.Status()
@@ -89,6 +125,23 @@ local function setStatus(value, err)
     state.Status = tostring(value or "Idle")
     state.LastError = err and tostring(err) or nil
     emit()
+end
+
+local function actionLog(phase, kind, fields)
+    fields = fields or {}
+
+    local chunks = {
+        "[DQR Macro]",
+        tostring(phase),
+        tostring(kind),
+    }
+
+    for key, value in pairs(fields) do
+        chunks[#chunks + 1] =
+            tostring(key) .. "=" .. tostring(value)
+    end
+
+    print(table.concat(chunks, " | "))
 end
 
 local function trim(value)
@@ -159,38 +212,139 @@ local function names()
     return list
 end
 
+local function liveCharacter(timeout)
+    local deadline = os.clock() + (timeout or 0)
+
+    repeat
+        local character = LP.Character
+
+        local humanoid =
+            character
+            and character:FindFirstChildOfClass(
+                "Humanoid"
+            )
+
+        local root =
+            character
+            and character:FindFirstChild(
+                "HumanoidRootPart"
+            )
+
+        if character
+            and humanoid
+            and humanoid.Health > 0
+            and root
+        then
+            return character, humanoid, root
+        end
+
+        task.wait(0.04)
+    until os.clock() >= deadline
+
+    return nil, nil, nil
+end
+
+local function eventTime()
+    return
+        math.max(
+            0,
+            os.clock()
+            - state.RecordingStartedAt
+        )
+end
+
+local function addEvent(macro, event)
+    event.t = eventTime()
+    macro.Events[#macro.Events + 1] = event
+end
+
+local function captureLook()
+    local _, _, root = liveCharacter(0)
+
+    if not root then
+        return nil
+    end
+
+    local look = root.CFrame.LookVector
+    local flat =
+        Vector3.new(
+            look.X,
+            0,
+            look.Z
+        )
+
+    if flat.Magnitude < 0.001 then
+        return nil
+    end
+
+    flat = flat.Unit
+
+    return {
+        flat.X,
+        flat.Z,
+    }
+end
+
+local function faceRecordedDirection(event)
+    if not event
+        or type(event.look) ~= "table"
+        or #event.look < 2
+    then
+        return
+    end
+
+    local _, humanoid, root =
+        liveCharacter(0)
+
+    if not humanoid or not root then
+        return
+    end
+
+    local direction =
+        Vector3.new(
+            tonumber(event.look[1]) or 0,
+            0,
+            tonumber(event.look[2]) or 0
+        )
+
+    if direction.Magnitude < 0.001 then
+        return
+    end
+
+    direction = direction.Unit
+
+    -- Rotation only. Position is preserved exactly.
+    pcall(function()
+        root.CFrame =
+            CFrame.lookAt(
+                root.Position,
+                root.Position + direction
+            )
+    end)
+end
+
+-- ------------------------------------------------------------
+-- Persistence + migration
+-- ------------------------------------------------------------
+
 local function sanitizeMacro(macro, fallbackName)
     if type(macro) ~= "table" then
         return nil
     end
 
-    local sourceEvents =
+    local source =
         type(macro.Events) == "table"
         and macro.Events
         or {}
 
     local events = {}
 
-    -- Older schema macros are accepted, but only movement/jump information is
-    -- retained. Camera/input fields are intentionally discarded.
-    for _, event in ipairs(sourceEvents) do
+    for _, event in ipairs(source) do
         if type(event) == "table"
-            and event.type == "frame"
-            and type(event.p) == "table"
-            and #event.p >= 3
-        then
-            events[#events + 1] = {
-                type = "move",
-                t = tonumber(event.t) or 0,
-                p = {
-                    tonumber(event.p[1]) or 0,
-                    tonumber(event.p[2]) or 0,
-                    tonumber(event.p[3]) or 0,
-                },
-            }
-
-        elseif type(event) == "table"
-            and event.type == "move"
+            and (
+                event.type == "move"
+                or event.type == "frame"
+            )
             and type(event.p) == "table"
             and #event.p >= 3
         then
@@ -211,6 +365,34 @@ local function sanitizeMacro(macro, fallbackName)
                 type = "jump",
                 t = tonumber(event.t) or 0,
             }
+
+        elseif type(event) == "table"
+            and event.type == "attack"
+        then
+            events[#events + 1] = {
+                type = "attack",
+                t = tonumber(event.t) or 0,
+                animation = event.animation,
+                look = event.look,
+            }
+
+        elseif type(event) == "table"
+            and event.type == "skill"
+        then
+            local slot =
+                string.lower(
+                    tostring(event.slot or "")
+                )
+
+            if slot == "q" or slot == "e" then
+                events[#events + 1] = {
+                    type = "skill",
+                    t = tonumber(event.t) or 0,
+                    slot = slot,
+                    name = tostring(event.name or ""),
+                    look = event.look,
+                }
+            end
         end
     end
 
@@ -218,9 +400,15 @@ local function sanitizeMacro(macro, fallbackName)
         return (a.t or 0) < (b.t or 0)
     end)
 
-    macro.Schema = 3
-    macro.Mode = "CharacterMovementOnly"
-    macro.Name = tostring(macro.Name or fallbackName or "Macro")
+    macro.Schema = 4
+    macro.Mode = "RouteCombatSemantic"
+    macro.Name =
+        tostring(
+            macro.Name
+            or fallbackName
+            or "Macro"
+        )
+
     macro.Events = events
     macro.SampleInterval = nil
 
@@ -239,7 +427,7 @@ local function saveIndex()
             HttpService.JSONEncode,
             HttpService,
             {
-                Schema = 3,
+                Schema = 4,
                 Names = names(),
             }
         )
@@ -250,7 +438,11 @@ local function saveIndex()
 end
 
 local function saveMacro(macro)
-    macro = sanitizeMacro(macro, macro and macro.Name)
+    macro =
+        sanitizeMacro(
+            macro,
+            macro and macro.Name
+        )
 
     if not macro or not macro.Name then
         return false, "Invalid macro"
@@ -366,43 +558,14 @@ local function loadIndex()
             )
 
         if macro then
-            state.Macros[macro.Name] =
-                macro
+            state.Macros[macro.Name] = macro
         end
     end
 end
 
-local function liveCharacter(timeout)
-    local deadline =
-        os.clock() + (timeout or 0)
-
-    repeat
-        local character = LP.Character
-        local humanoid =
-            character
-            and character:FindFirstChildOfClass(
-                "Humanoid"
-            )
-
-        local root =
-            character
-            and character:FindFirstChild(
-                "HumanoidRootPart"
-            )
-
-        if character
-            and humanoid
-            and humanoid.Health > 0
-            and root
-        then
-            return character, humanoid, root
-        end
-
-        task.wait(0.05)
-    until os.clock() >= deadline
-
-    return nil, nil, nil
-end
+-- ------------------------------------------------------------
+-- Auto Farm bridge
+-- ------------------------------------------------------------
 
 local function pauseFarm()
     local bridge = state.FarmBridge
@@ -460,6 +623,10 @@ local function restoreFarm()
     state.FarmWasEnabled = nil
 end
 
+-- ------------------------------------------------------------
+-- Recording: movement
+-- ------------------------------------------------------------
+
 local function clearRecordConnections()
     for _, connection in ipairs(
         state.RecordConnections
@@ -469,21 +636,88 @@ local function clearRecordConnections()
         end)
     end
 
-    table.clear(
-        state.RecordConnections
-    )
+    table.clear(state.RecordConnections)
+    state.WatchedAbilityTools = {}
 end
 
-local function addEvent(macro, event)
-    event.t =
-        math.max(
-            0,
-            os.clock()
-            - state.RecordingStartedAt
-        )
+local function connectRecord(signal, callback)
+    local connection =
+        signal:Connect(callback)
 
-    macro.Events[#macro.Events + 1] =
-        event
+    state.RecordConnections[
+        #state.RecordConnections + 1
+    ] = connection
+
+    return connection
+end
+
+local function shouldRecordMove(position, force)
+    if force
+        or not state.LastSamplePosition
+    then
+        return true
+    end
+
+    local delta =
+        position
+        - state.LastSamplePosition
+
+    local distance = delta.Magnitude
+
+    if math.abs(delta.Y)
+        >= SAMPLE_VERTICAL_TRIGGER
+    then
+        return true
+    end
+
+    if distance >= SAMPLE_MIN_DISTANCE then
+        return true
+    end
+
+    local previous =
+        state.PreviousSamplePosition
+
+    if previous
+        and distance
+            >= SAMPLE_CORNER_MIN_DISTANCE
+    then
+        local oldVector =
+            state.LastSamplePosition
+            - previous
+
+        local newVector =
+            position
+            - state.LastSamplePosition
+
+        local oldFlat =
+            Vector3.new(
+                oldVector.X,
+                0,
+                oldVector.Z
+            )
+
+        local newFlat =
+            Vector3.new(
+                newVector.X,
+                0,
+                newVector.Z
+            )
+
+        if oldFlat.Magnitude > 0.15
+            and newFlat.Magnitude > 0.15
+        then
+            local dot =
+                oldFlat.Unit:Dot(
+                    newFlat.Unit
+                )
+
+            if dot <= SAMPLE_CORNER_DOT then
+                return true
+            end
+        end
+    end
+
+    return false
 end
 
 local function recordMove(macro, force)
@@ -494,27 +728,22 @@ local function recordMove(macro, force)
         return false
     end
 
-    local now = os.clock()
     local position = root.Position
-    local last = state.LastSamplePosition
 
-    local distance =
-        last
-        and (position - last).Magnitude
-        or math.huge
+    if not shouldRecordMove(
+        position,
+        force
+    ) then
+        return false
+    end
 
-    local vertical =
-        last
-        and math.abs(position.Y - last.Y)
-        or math.huge
-
-    local elapsed =
-        now - state.LastSampleAt
-
-    if not force
-        and distance < SAMPLE_MIN_DISTANCE
-        and vertical < SAMPLE_VERTICAL_TRIGGER
-        and elapsed < SAMPLE_MAX_INTERVAL
+    -- Do not write duplicate forced samples at the exact same point.
+    if state.LastSamplePosition
+        and (
+            position
+            - state.LastSamplePosition
+        ).Magnitude < 0.06
+        and force
     then
         return false
     end
@@ -531,21 +760,401 @@ local function recordMove(macro, force)
         }
     )
 
-    state.LastSamplePosition = position
-    state.LastSampleAt = now
+    state.PreviousSamplePosition =
+        state.LastSamplePosition
+
+    state.LastSamplePosition =
+        position
+
+    state.LastSampleAt =
+        os.clock()
 
     return true
 end
 
-local function connectRecord(signal, callback)
-    local connection =
-        signal:Connect(callback)
+-- ------------------------------------------------------------
+-- Recording: semantic combat
+-- ------------------------------------------------------------
 
-    state.RecordConnections[
-        #state.RecordConnections + 1
-    ] = connection
+local function abilitySlotOf(tool)
+    if not tool
+        or not tool:IsA("Tool")
+    then
+        return nil
+    end
 
-    return connection
+    local slotValue =
+        tool:FindFirstChild(
+            "abilitySlot"
+        )
+
+    if not slotValue then
+        return nil
+    end
+
+    local slot =
+        string.lower(
+            tostring(slotValue.Value)
+        )
+
+    if slot == "q"
+        or slot == "e"
+    then
+        return slot
+    end
+
+    return nil
+end
+
+local function recordSkill(macro, slot, tool)
+    local now = os.clock()
+
+    if now - state.LastSkillRecordedAt
+        < ACTION_DEDUPE_WINDOW
+    then
+        return
+    end
+
+    state.LastSkillRecordedAt = now
+
+    recordMove(
+        macro,
+        true
+    )
+
+    local event = {
+        type = "skill",
+        slot = slot,
+        name = tool and tool.Name or "",
+        look = captureLook(),
+    }
+
+    addEvent(macro, event)
+
+    state.LastAction =
+        "Skill "
+        .. string.upper(slot)
+        .. (
+            tool
+            and (" • " .. tool.Name)
+            or ""
+        )
+
+    actionLog(
+        "REC",
+        "SKILL",
+        {
+            slot = slot,
+            name = tool and tool.Name or "unknown",
+            t = string.format("%.3f", event.t),
+        }
+    )
+
+    emit()
+end
+
+local function watchAbilityTool(macro, tool)
+    if not tool
+        or state.WatchedAbilityTools[tool]
+    then
+        return
+    end
+
+    local slot =
+        abilitySlotOf(tool)
+
+    if not slot then
+        return
+    end
+
+    state.WatchedAbilityTools[tool] =
+        true
+
+    local cooldown =
+        tool:FindFirstChild(
+            "cooldown"
+        )
+
+    if not cooldown then
+        return
+    end
+
+    local lastValue =
+        tonumber(cooldown.Value)
+        or 0
+
+    connectRecord(
+        cooldown:GetPropertyChangedSignal(
+            "Value"
+        ),
+        function()
+            if not state.Recording then
+                return
+            end
+
+            local value =
+                tonumber(cooldown.Value)
+                or 0
+
+            -- A cast starts when cooldown transitions from ready to positive,
+            -- or sharply resets upward for games that never expose exact zero.
+            local started =
+                value > 0
+                and (
+                    lastValue <= 0
+                    or value
+                        > lastValue + 0.20
+                )
+
+            lastValue = value
+
+            if started then
+                recordSkill(
+                    macro,
+                    slot,
+                    tool
+                )
+            end
+        end
+    )
+end
+
+local function scanAbilityTools(macro)
+    local backpack =
+        LP:FindFirstChild("Backpack")
+
+    local character =
+        LP.Character
+
+    for _, container in ipairs({
+        backpack,
+        character,
+    }) do
+        if container then
+            for _, child in ipairs(
+                container:GetChildren()
+            ) do
+                watchAbilityTool(
+                    macro,
+                    child
+                )
+            end
+        end
+    end
+end
+
+local function hasWeaponAccessory()
+    local character =
+        LP.Character
+
+    if not character then
+        return false
+    end
+
+    for _, instance in ipairs(
+        character:GetChildren()
+    ) do
+        if instance:IsA("Accessory")
+            and instance:FindFirstChild(
+                "Weapon"
+            )
+            and instance:FindFirstChildOfClass(
+                "RemoteEvent"
+            )
+        then
+            return true
+        end
+    end
+
+    return false
+end
+
+local ACTION_PRIORITIES = {
+    [Enum.AnimationPriority.Action] = true,
+    [Enum.AnimationPriority.Action2] = true,
+    [Enum.AnimationPriority.Action3] = true,
+    [Enum.AnimationPriority.Action4] = true,
+}
+
+local function recordAttackFromAnimation(
+    macro,
+    track
+)
+    if not state.Recording
+        or not hasWeaponAccessory()
+    then
+        return
+    end
+
+    if not ACTION_PRIORITIES[
+        track.Priority
+    ] then
+        return
+    end
+
+    local startedAt = os.clock()
+    local animationId = ""
+
+    pcall(function()
+        animationId =
+            track.Animation
+            and track.Animation.AnimationId
+            or ""
+    end)
+
+    -- Ability animations also use Action priority. Delay classification very
+    -- briefly so a Q/E cooldown transition can claim the same animation first.
+    task.delay(
+        0.07,
+        function()
+            if not state.Recording then
+                return
+            end
+
+            if os.clock()
+                - state.LastSkillRecordedAt
+                <= SKILL_ANIMATION_DEDUPE_WINDOW
+            then
+                return
+            end
+
+            if startedAt
+                <= state.LastAttackRecordedAt
+                    + ACTION_DEDUPE_WINDOW
+            then
+                return
+            end
+
+            state.LastAttackRecordedAt =
+                startedAt
+
+            recordMove(
+                macro,
+                true
+            )
+
+            local event = {
+                type = "attack",
+                animation = animationId,
+                look = captureLook(),
+            }
+
+            addEvent(macro, event)
+
+            state.LastAction =
+                animationId ~= ""
+                and (
+                    "Basic Attack • "
+                    .. animationId
+                )
+                or "Basic Attack"
+
+            actionLog(
+                "REC",
+                "ATTACK",
+                {
+                    animation =
+                        animationId ~= ""
+                        and animationId
+                        or "unknown",
+                    t =
+                        string.format(
+                            "%.3f",
+                            event.t
+                        ),
+                }
+            )
+
+            emit()
+        end
+    )
+end
+
+local function bindCombatObservers(macro)
+    local boundAnimator
+
+    local function bindCharacter()
+        local character, humanoid =
+            liveCharacter(1)
+
+        if not character
+            or not humanoid
+        then
+            return
+        end
+
+        local animator =
+            humanoid:FindFirstChildOfClass(
+                "Animator"
+            )
+
+        if animator
+            and animator ~= boundAnimator
+        then
+            boundAnimator = animator
+
+            connectRecord(
+                animator.AnimationPlayed,
+                function(track)
+                    recordAttackFromAnimation(
+                        macro,
+                        track
+                    )
+                end
+            )
+        end
+
+        connectRecord(
+            character.ChildAdded,
+            function(child)
+                if state.Recording then
+                    watchAbilityTool(
+                        macro,
+                        child
+                    )
+                end
+            end
+        )
+    end
+
+    local backpack =
+        LP:FindFirstChild("Backpack")
+
+    if backpack then
+        connectRecord(
+            backpack.ChildAdded,
+            function(child)
+                if state.Recording then
+                    watchAbilityTool(
+                        macro,
+                        child
+                    )
+                end
+            end
+        )
+    end
+
+    bindCharacter()
+    scanAbilityTools(macro)
+
+    connectRecord(
+        LP.CharacterAdded,
+        function()
+            if state.Recording then
+                task.delay(
+                    0.20,
+                    function()
+                        if state.Recording then
+                            bindCharacter()
+                            scanAbilityTools(
+                                macro
+                            )
+                        end
+                    end
+                )
+            end
+        end
+    )
 end
 
 local function attachRecordListeners(macro)
@@ -577,7 +1186,7 @@ local function attachRecordListeners(macro)
 
     local boundHumanoid
 
-    local function bindHumanoid()
+    local function bindJump()
         local _, humanoid =
             liveCharacter(1)
 
@@ -599,38 +1208,46 @@ local function attachRecordListeners(macro)
                 if newState
                     == Enum.HumanoidStateType.Jumping
                 then
-                    -- Capture the current movement point immediately before
-                    -- the jump marker so playback jumps at the same location.
                     recordMove(
                         macro,
                         true
                     )
 
+                    local event = {
+                        type = "jump",
+                    }
+
                     addEvent(
                         macro,
-                        {
-                            type = "jump",
-                        }
+                        event
                     )
+
+                    state.LastAction =
+                        "Jump"
                 end
             end
         )
     end
 
-    bindHumanoid()
+    bindJump()
+    bindCombatObservers(macro)
 
     connectRecord(
         LP.CharacterAdded,
         function()
             if state.Recording then
                 task.delay(
-                    0.25,
-                    bindHumanoid
+                    0.20,
+                    bindJump
                 )
             end
         end
     )
 end
+
+-- ------------------------------------------------------------
+-- Playback helpers
+-- ------------------------------------------------------------
 
 local function vectorFromEvent(event)
     if not event
@@ -648,7 +1265,8 @@ local function vectorFromEvent(event)
 end
 
 local function reached(root, target)
-    local delta = root.Position - target
+    local delta =
+        root.Position - target
 
     local horizontal =
         Vector3.new(
@@ -683,7 +1301,7 @@ local function stopHumanoid()
     end
 end
 
-local function moveToWaypoint(target, token, maxTime)
+local function routeMoveTo(target, token)
     local _, humanoid, root =
         liveCharacter(2)
 
@@ -691,29 +1309,36 @@ local function moveToWaypoint(target, token, maxTime)
         return false, "Character unavailable"
     end
 
-    local startDistance =
+    local distance =
         (root.Position - target).Magnitude
 
     local walkSpeed =
         math.max(
-            tonumber(humanoid.WalkSpeed) or 16,
+            tonumber(humanoid.WalkSpeed)
+            or 16,
             1
         )
 
     local timeout =
-        maxTime
-        or math.clamp(
-            startDistance / walkSpeed * 2.6 + 0.85,
-            0.65,
-            7.0
+        math.clamp(
+            distance / walkSpeed
+                * 2.15
+                + 0.45,
+            WAYPOINT_TIMEOUT_MIN,
+            WAYPOINT_TIMEOUT_MAX
         )
 
     local deadline =
         os.clock() + timeout
 
-    local bestDistance = startDistance
-    local lastProgressAt = os.clock()
-    local lastCommandAt = -math.huge
+    local bestDistance =
+        distance
+
+    local lastProgressAt =
+        os.clock()
+
+    local lastCommandAt =
+        -math.huge
 
     while state.Alive
         and token == state.PlayToken
@@ -725,7 +1350,7 @@ local function moveToWaypoint(target, token, maxTime)
         if not liveHumanoid
             or not liveRoot
         then
-            task.wait(0.05)
+            task.wait(0.035)
             continue
         end
 
@@ -736,7 +1361,7 @@ local function moveToWaypoint(target, token, maxTime)
             return true
         end
 
-        local distance =
+        distance =
             (root.Position - target).Magnitude
 
         if distance
@@ -753,36 +1378,298 @@ local function moveToWaypoint(target, token, maxTime)
             lastCommandAt = os.clock()
 
             pcall(function()
-                humanoid:MoveTo(target)
+                humanoid:MoveTo(
+                    target
+                )
             end)
         end
 
         if os.clock() - lastProgressAt
             >= STUCK_WINDOW
         then
-            -- A small ordinary jump often clears stairs, lips and low props.
-            -- No CFrame correction is used.
+            -- Ordinary recovery only. No positional CFrame teleport.
             pcall(function()
                 humanoid.Jump = true
-                humanoid:MoveTo(target)
+                humanoid:MoveTo(
+                    target
+                )
             end)
 
-            lastProgressAt = os.clock()
-            bestDistance = distance
+            lastProgressAt =
+                os.clock()
+
+            bestDistance =
+                distance
         end
 
         task.wait(0.03)
     end
 
-    -- Do not freeze the entire macro on one missed sample. The next nearby
-    -- recorded waypoint often recovers the route naturally.
     return false, "waypoint_timeout"
 end
 
-local function firstMoveEvent(events)
-    for _, event in ipairs(events) do
-        if event.type == "move" then
-            return event
+local function abilityTool(slot, preferredName)
+    local backpack =
+        LP:FindFirstChild("Backpack")
+
+    local character =
+        LP.Character
+
+    local fallback
+
+    for _, container in ipairs({
+        backpack,
+        character,
+    }) do
+        if container then
+            for _, child in ipairs(
+                container:GetChildren()
+            ) do
+                local childSlot =
+                    abilitySlotOf(child)
+
+                if childSlot == slot then
+                    if preferredName
+                        and preferredName ~= ""
+                        and child.Name
+                            == preferredName
+                    then
+                        return child
+                    end
+
+                    fallback =
+                        fallback or child
+                end
+            end
+        end
+    end
+
+    return fallback
+end
+
+local function replaySkill(event)
+    local slot =
+        string.lower(
+            tostring(event.slot or "")
+        )
+
+    if slot ~= "q"
+        and slot ~= "e"
+    then
+        return false, "invalid_slot"
+    end
+
+    local tool =
+        abilityTool(
+            slot,
+            event.name
+        )
+
+    if not tool then
+        actionLog(
+            "PLAY",
+            "SKILL_SKIP",
+            {
+                slot = slot,
+                reason = "tool_missing",
+            }
+        )
+
+        return false, "tool_missing"
+    end
+
+    local cooldown =
+        tool:FindFirstChild(
+            "cooldown"
+        )
+
+    local readyDeadline =
+        os.clock()
+        + SKILL_READY_GRACE
+
+    while cooldown
+        and tonumber(cooldown.Value)
+        and cooldown.Value > 0
+        and os.clock() < readyDeadline
+    do
+        task.wait(0.03)
+    end
+
+    if cooldown
+        and tonumber(cooldown.Value)
+        and cooldown.Value > 0
+    then
+        actionLog(
+            "PLAY",
+            "SKILL_SKIP",
+            {
+                slot = slot,
+                name = tool.Name,
+                reason = "cooldown",
+            }
+        )
+
+        return false, "cooldown"
+    end
+
+    local localEvent =
+        tool:FindFirstChild(
+            "localEvent"
+        )
+
+    if not localEvent then
+        return false, "localEvent_missing"
+    end
+
+    faceRecordedDirection(
+        event
+    )
+
+    pcall(function()
+        localEvent:Fire()
+    end)
+
+    local remotes =
+        ReplicatedStorage
+        :FindFirstChild("remotes")
+
+    local abilityUsed =
+        remotes
+        and remotes:FindFirstChild(
+            "abilityUsed"
+        )
+
+    if abilityUsed
+        and abilityUsed:IsA(
+            "RemoteEvent"
+        )
+    then
+        pcall(function()
+            abilityUsed:FireServer(
+                slot,
+                tool
+            )
+        end)
+    end
+
+    state.LastAction =
+        "Skill "
+        .. string.upper(slot)
+        .. " • "
+        .. tool.Name
+
+    actionLog(
+        "PLAY",
+        "SKILL",
+        {
+            slot = slot,
+            name = tool.Name,
+        }
+    )
+
+    return true
+end
+
+local function equippedWeaponEvent()
+    local character =
+        LP.Character
+
+    if not character then
+        return nil
+    end
+
+    for _, instance in ipairs(
+        character:GetChildren()
+    ) do
+        if instance:IsA("Accessory")
+            and instance:FindFirstChild(
+                "Weapon"
+            )
+        then
+            local remote =
+                instance:FindFirstChildOfClass(
+                    "RemoteEvent"
+                )
+
+            if remote then
+                return remote
+            end
+        end
+    end
+
+    return nil
+end
+
+local function replayAttack(event)
+    local weaponEvent =
+        equippedWeaponEvent()
+
+    if not weaponEvent then
+        actionLog(
+            "PLAY",
+            "ATTACK_SKIP",
+            {
+                reason = "weapon_remote_missing",
+            }
+        )
+
+        return false, "weapon_remote_missing"
+    end
+
+    faceRecordedDirection(
+        event
+    )
+
+    pcall(function()
+        weaponEvent:FireServer()
+    end)
+
+    local remotes =
+        ReplicatedStorage
+        :FindFirstChild("remotes")
+
+    local weaponUsed =
+        remotes
+        and remotes:FindFirstChild(
+            "weaponUsed"
+        )
+
+    if weaponUsed
+        and weaponUsed:IsA(
+            "RemoteEvent"
+        )
+    then
+        pcall(function()
+            weaponUsed:FireServer()
+        end)
+    end
+
+    state.LastAction =
+        "Basic Attack"
+
+    actionLog(
+        "PLAY",
+        "ATTACK",
+        {
+            animation =
+                tostring(
+                    event.animation
+                    or "unknown"
+                ),
+        }
+    )
+
+    return true
+end
+
+-- ------------------------------------------------------------
+-- Playback
+-- ------------------------------------------------------------
+
+local function nextMoveIndex(events, startIndex)
+    for index = startIndex, #events do
+        if events[index].type == "move" then
+            return index
         end
     end
 
@@ -800,16 +1687,7 @@ local function playBlocking(macro, token, loopIndex)
         or type(macro.Events) ~= "table"
         or #macro.Events == 0
     then
-        return false, "Macro has no movement"
-    end
-
-    local first =
-        firstMoveEvent(
-            macro.Events
-        )
-
-    if not first then
-        return false, "Macro has no movement"
+        return false, "Macro has no events"
     end
 
     state.Playing = true
@@ -824,56 +1702,56 @@ local function playBlocking(macro, token, loopIndex)
         or "Playing Macro"
     )
 
-    -- Begin from the recorded start point. This also makes repeated macros
-    -- deterministic when the previous loop ends slightly off-route.
-    local firstTarget =
-        vectorFromEvent(first)
+    local events = macro.Events
+    local index = 1
 
-    if firstTarget then
-        moveToWaypoint(
-            firstTarget,
-            token,
-            nil
-        )
-    end
+    while state.Alive
+        and token == state.PlayToken
+        and index <= #events
+    do
+        local event =
+            events[index]
 
-    local playbackStarted =
-        os.clock()
+        if event.type == "move" then
+            local targetIndex =
+                index
 
-    local previousTime = 0
+            -- Small geometric lookahead keeps MoveTo from stopping at every
+            -- dense recorded point. Never look through an action/jump event.
+            for step = 1, ROUTE_LOOKAHEAD_POINTS do
+                local candidateIndex =
+                    targetIndex + 1
 
-    for _, event in ipairs(
-        macro.Events
-    ) do
-        if not state.Alive
-            or token ~= state.PlayToken
-        then
-            break
-        end
+                local candidate =
+                    events[candidateIndex]
 
-        local eventTime =
-            math.max(
-                0,
-                tonumber(event.t) or 0
-            )
+                if not candidate
+                    or candidate.type
+                        ~= "move"
+                then
+                    break
+                end
 
-        if event.type == "jump" then
-            local waitUntil =
-                playbackStarted
-                + eventTime
+                targetIndex =
+                    candidateIndex
+            end
 
-            while state.Alive
-                and token == state.PlayToken
-                and os.clock() < waitUntil
-            do
-                task.wait(
-                    math.min(
-                        0.03,
-                        waitUntil - os.clock()
-                    )
+            local target =
+                vectorFromEvent(
+                    events[targetIndex]
+                )
+
+            if target then
+                routeMoveTo(
+                    target,
+                    token
                 )
             end
 
+            index =
+                targetIndex + 1
+
+        elseif event.type == "jump" then
             local _, humanoid =
                 liveCharacter(0)
 
@@ -883,53 +1761,21 @@ local function playBlocking(macro, token, loopIndex)
                 end)
             end
 
-        elseif event.type == "move" then
-            local target =
-                vectorFromEvent(event)
+            state.LastAction =
+                "Jump"
 
-            if target then
-                local segmentRecordedTime =
-                    math.max(
-                        0.05,
-                        eventTime - previousTime
-                    )
+            index += 1
 
-                -- Allow extra real-world time for collisions/latency while
-                -- preserving the recorded path order.
-                local segmentBudget =
-                    math.clamp(
-                        segmentRecordedTime * 2.35 + 0.35,
-                        0.55,
-                        4.5
-                    )
+        elseif event.type == "attack" then
+            replayAttack(event)
+            index += 1
 
-                moveToWaypoint(
-                    target,
-                    token,
-                    segmentBudget
-                )
+        elseif event.type == "skill" then
+            replaySkill(event)
+            index += 1
 
-                -- If we reached this point early, preserve intentional pauses
-                -- from the recording instead of racing through the macro.
-                local scheduled =
-                    playbackStarted
-                    + eventTime
-
-                while state.Alive
-                    and token == state.PlayToken
-                    and os.clock() < scheduled
-                do
-                    task.wait(
-                        math.min(
-                            0.03,
-                            scheduled - os.clock()
-                        )
-                    )
-                end
-
-                previousTime =
-                    eventTime
-            end
+        else
+            index += 1
         end
     end
 
@@ -944,6 +1790,10 @@ local function playBlocking(macro, token, loopIndex)
 
     return true
 end
+
+-- ------------------------------------------------------------
+-- Public API
+-- ------------------------------------------------------------
 
 function MacroController.AttachFarm(bridge)
     state.FarmBridge =
@@ -986,14 +1836,17 @@ function MacroController.Create(name)
     end
 
     local macro = {
-        Schema = 3,
-        Mode = "CharacterMovementOnly",
+        Schema = 4,
+        Mode = "RouteCombatSemantic",
+
         Name = valid,
         CreatedAt = os.time(),
         UpdatedAt = os.time(),
         Duration = 0,
+
         UniverseId = game.GameId,
         CreatedPlaceId = game.PlaceId,
+
         Events = {},
     }
 
@@ -1010,7 +1863,6 @@ function MacroController.Create(name)
     end
 
     state.Selected = valid
-
     setStatus("Macro created")
 
     return true, valid
@@ -1098,8 +1950,8 @@ function MacroController.StartRecording(name)
         return false, "Already recording"
     end
 
-    macro.Schema = 3
-    macro.Mode = "CharacterMovementOnly"
+    macro.Schema = 4
+    macro.Mode = "RouteCombatSemantic"
     macro.Events = {}
     macro.Duration = 0
     macro.UpdatedAt = os.time()
@@ -1107,12 +1959,24 @@ function MacroController.StartRecording(name)
     macro.RecordedPlaceId = game.PlaceId
 
     state.Selected = macro.Name
+
     state.Recording = true
     state.RecordingStartedAt =
         os.clock()
 
+    state.RecordAccumulator = 0
+
     state.LastSamplePosition = nil
+    state.PreviousSamplePosition = nil
     state.LastSampleAt = -math.huge
+
+    state.LastSkillRecordedAt =
+        -math.huge
+
+    state.LastAttackRecordedAt =
+        -math.huge
+
+    state.LastAction = "None"
 
     pauseFarm()
 
@@ -1125,8 +1989,17 @@ function MacroController.StartRecording(name)
         macro
     )
 
+    actionLog(
+        "REC",
+        "START",
+        {
+            macro = macro.Name,
+            place = game.PlaceId,
+        }
+    )
+
     setStatus(
-        "Recording character movement"
+        "Recording route + combat"
     )
 
     return true
@@ -1165,7 +2038,7 @@ function MacroController.StopRecording(save)
     clearRecordConnections()
 
     state.LastSamplePosition = nil
-    state.LastSampleAt = -math.huge
+    state.PreviousSamplePosition = nil
 
     local ok, err = true, nil
 
@@ -1176,9 +2049,29 @@ function MacroController.StopRecording(save)
 
     restoreFarm()
 
+    local counts =
+        MacroController.CountEvents(
+            macro
+        )
+
+    actionLog(
+        "REC",
+        "STOP",
+        {
+            macro =
+                macro
+                and macro.Name
+                or "none",
+            moves = counts.Moves,
+            jumps = counts.Jumps,
+            attacks = counts.Attacks,
+            skills = counts.Skills,
+        }
+    )
+
     if ok then
         setStatus(
-            "Movement recording saved"
+            "Macro recording saved"
         )
     else
         setStatus(
@@ -1345,7 +2238,6 @@ function MacroController.SetAuto(enabled)
         end)
 
         emit()
-
         return true
     end
 
@@ -1425,6 +2317,45 @@ function MacroController.Get(name)
     ]
 end
 
+function MacroController.CountEvents(macro)
+    macro =
+        macro
+        or MacroController.Get()
+
+    local counts = {
+        Moves = 0,
+        Jumps = 0,
+        Attacks = 0,
+        Skills = 0,
+        Total = 0,
+    }
+
+    if not macro
+        or type(macro.Events)
+            ~= "table"
+    then
+        return counts
+    end
+
+    for _, event in ipairs(
+        macro.Events
+    ) do
+        counts.Total += 1
+
+        if event.type == "move" then
+            counts.Moves += 1
+        elseif event.type == "jump" then
+            counts.Jumps += 1
+        elseif event.type == "attack" then
+            counts.Attacks += 1
+        elseif event.type == "skill" then
+            counts.Skills += 1
+        end
+    end
+
+    return counts
+end
+
 function MacroController.Status()
     local selected =
         state.Selected
@@ -1432,15 +2363,22 @@ function MacroController.Status()
             state.Selected
         ]
 
+    local counts =
+        MacroController.CountEvents(
+            selected
+        )
+
     return {
         Selected = state.Selected,
+
         Recording = state.Recording,
         Playing = state.Playing,
         Auto = state.Auto,
 
         Status = state.Status,
         Storage = state.Storage,
-        MovementOnly = true,
+        Mode = "Route + attacks + Q/E skills",
+        LastAction = state.LastAction,
 
         Duration =
             state.Recording
@@ -1457,10 +2395,11 @@ function MacroController.Status()
                 or 0
             ),
 
-        Events =
-            selected
-            and #selected.Events
-            or 0,
+        Events = counts.Total,
+        Moves = counts.Moves,
+        Jumps = counts.Jumps,
+        Attacks = counts.Attacks,
+        Skills = counts.Skills,
 
         Count = #names(),
         Error = state.LastError,
