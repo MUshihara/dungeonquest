@@ -707,16 +707,21 @@ Runtime.SamuraiLocalGapCandidate = function(
     local denseMiyamoto =
         Runtime.ActiveBossName
             == "Miyamoto Musashi"
-        and attackName
-            == "doubleFlameBeam"
         and (
-            bossThreatHas(
-                "flameShurikenHit",
+            Runtime.MiyamotoCycloneActive
+            or bossThreatHas(
+                "doubleFlameBeam",
                 bossThreats
             )
-            or bossThreatHas(
-                "flameBeam",
-                bossThreats
+            or (
+                bossThreatHas(
+                    "flameShurikenHit",
+                    bossThreats
+                )
+                and bossThreatHas(
+                    "flameBeam",
+                    bossThreats
+                )
             )
         )
 
@@ -730,6 +735,14 @@ Runtime.SamuraiLocalGapCandidate = function(
     -- failure in the two Modular V1 runs.
     if currentInside == 0
         and currentPhysicalPenalty <= 0
+        and not (
+            Runtime.ActiveBossName
+                == "Miyamoto Musashi"
+            and horizontalDistance(
+                origin,
+                Runtime.ActiveBossRoot.Position
+            ) > CFG.MIYAMOTO_ARENA_LEASH
+        )
         and (
             currentClearance
                 == math.huge
@@ -843,11 +856,47 @@ Runtime.SamuraiLocalGapCandidate = function(
                             - candidateBossDistance
                         )
 
+                    local rangePenalty = 0
+
+                    if Runtime.ActiveBossName
+                        == "Miyamoto Musashi"
+                    then
+                        -- Do not solve Miyamoto by continuously retreating.
+                        -- Stay near the real damage envelope and inside the
+                        -- observed arena while still prioritizing geometry.
+                        inward = 0
+
+                        local desiredBossRange =
+                            CFG.BOSS_DESIRED_RANGE[
+                                "Miyamoto Musashi"
+                            ]
+                            or 28
+
+                        rangePenalty +=
+                            math.abs(
+                                candidateBossDistance
+                                - desiredBossRange
+                            ) * 220
+
+                        if candidateBossDistance
+                            > CFG.MIYAMOTO_ARENA_LEASH
+                        then
+                            rangePenalty +=
+                                150000
+                                + (
+                                    candidateBossDistance
+                                    - CFG.MIYAMOTO_ARENA_LEASH
+                                )
+                                * CFG.MIYAMOTO_ARENA_LEASH_PENALTY
+                        end
+                    end
+
                     local score =
                         danger * 0.05
                         + radius * 150
                         + crossing * 0.05
                         + inward * 420
+                        + rangePenalty
                         + physicalPenalty
                             * CFG.SAMURAI_LOCAL_GAP_PHYSICAL_WEIGHT
 
