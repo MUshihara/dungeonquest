@@ -277,6 +277,14 @@ Runtime.BindSamuraiPalaceSignals = function()
                     Runtime.MiyamotoPhase =
                         "post_cyclone"
 
+                    for id, vt in pairs(
+                        Runtime.VirtualThreats
+                    ) do
+                        if vt.Source == "Flame Cyclone" then
+                            Runtime.VirtualThreats[id] = nil
+                        end
+                    end
+
                 elseif action == "spinFlameShuriken" then
                     Runtime.MiyamotoPhase =
                         "flame_shuriken"
@@ -286,6 +294,14 @@ Runtime.BindSamuraiPalaceSignals = function()
                         "idle"
                     Runtime.MiyamotoCycloneActive =
                         false
+
+                    for id, vt in pairs(
+                        Runtime.VirtualThreats
+                    ) do
+                        if vt.Source == "Flame Cyclone" then
+                            Runtime.VirtualThreats[id] = nil
+                        end
+                    end
                 end
 
                 logKV(
