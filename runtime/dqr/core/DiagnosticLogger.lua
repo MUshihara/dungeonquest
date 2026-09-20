@@ -270,10 +270,14 @@ Runtime.BindSamuraiPalaceSignals = function()
                         "fire_cyclone"
                     Runtime.MiyamotoCycloneActive =
                         true
+                    Runtime.MiyamotoCycloneSuppressed =
+                        false
 
                 elseif action == "endFireCyclone" then
                     Runtime.MiyamotoCycloneActive =
                         false
+                    Runtime.MiyamotoCycloneSuppressed =
+                        true
                     Runtime.MiyamotoPhase =
                         "post_cyclone"
 
@@ -294,6 +298,8 @@ Runtime.BindSamuraiPalaceSignals = function()
                         "idle"
                     Runtime.MiyamotoCycloneActive =
                         false
+                    Runtime.MiyamotoCycloneSuppressed =
+                        true
 
                     for id, vt in pairs(
                         Runtime.VirtualThreats
