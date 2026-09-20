@@ -193,7 +193,7 @@ local function buildManifest()
                 Title = "Macro",
                 Icon = "route",
                 Description =
-                    "Record only your character route and jumps in any Dungeon Quest place.",
+                    "Record your route, jumps, basic attacks, and Q/E skills in any Dungeon Quest place.",
                 Features = {
                     {
                         Id = "Library",
@@ -291,7 +291,7 @@ local function buildManifest()
                         Id = "Recorder",
                         Title = "Recorder",
                         Description =
-                            "Capture only your character movement route and jumps.",
+                            "Capture character movement plus semantic basic attacks and Q/E skills. No screen/camera recording.",
                         Accent = "mint",
                         Expanded = true,
                         Controls = {
@@ -300,7 +300,7 @@ local function buildManifest()
                                 Type = "Action",
                                 Title = "Start Recording",
                                 Description =
-                                    "Begin recording your character path from the current position.",
+                                    "Record the route and combat actions from your current position.",
                                 ButtonText = "RECORD",
                                 Callback = function()
                                     local ok, err =
@@ -334,7 +334,7 @@ local function buildManifest()
                                 Type = "Action",
                                 Title = "Play Once",
                                 Description =
-                                    "Replay the recorded character path one time.",
+                                    "Replay the recorded route, attacks, and skills one time.",
                                 ButtonText = "PLAY",
                                 Callback = function()
                                     local ok, err =
@@ -376,7 +376,7 @@ local function buildManifest()
                         Id = "Automation",
                         Title = "Auto Macro",
                         Description =
-                            "Continuously repeat the selected character movement path.",
+                            "Continuously repeat the selected route and recorded combat actions.",
                         Accent = "cyan",
                         Expanded = true,
                         Controls = {
@@ -451,6 +451,36 @@ local function buildManifest()
                                 Type = "Live",
                                 Title = "Recorded Events",
                                 Value = "0",
+                            },
+                            {
+                                Id = "Moves",
+                                Type = "Live",
+                                Title = "Move Points",
+                                Value = "0",
+                            },
+                            {
+                                Id = "Attacks",
+                                Type = "Live",
+                                Title = "Basic Attacks",
+                                Value = "0",
+                            },
+                            {
+                                Id = "Skills",
+                                Type = "Live",
+                                Title = "Q/E Skills",
+                                Value = "0",
+                            },
+                            {
+                                Id = "Jumps",
+                                Type = "Live",
+                                Title = "Jumps",
+                                Value = "0",
+                            },
+                            {
+                                Id = "LastAction",
+                                Type = "Live",
+                                Title = "Last Action",
+                                Value = "None",
                             },
                             {
                                 Id = "Saved",
@@ -528,6 +558,31 @@ function UI:UpdateLive()
     )
 
     adapter:SetLive(
+        "Macro.Status.Moves",
+        tostring(status.Moves or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Attacks",
+        tostring(status.Attacks or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Skills",
+        tostring(status.Skills or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Jumps",
+        tostring(status.Jumps or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.LastAction",
+        tostring(status.LastAction or "None")
+    )
+
+    adapter:SetLive(
         "Macro.Status.Saved",
         tostring(status.Count or 0)
     )
@@ -535,11 +590,7 @@ function UI:UpdateLive()
     adapter:SetLive(
         "Macro.Status.Storage",
         tostring(status.Storage)
-        .. (
-            status.MovementOnly
-            and " • character movement only"
-            or " • movement macro"
-        )
+        .. " • semantic combat recorder"
     )
 
     adapter:SetLive(
@@ -633,7 +684,7 @@ function UI:Build()
             and UI.App == appOrError
         do
             UI:UpdateLive()
-            task.wait(0.25)
+            task.wait(0.50)
         end
     end)
 end
