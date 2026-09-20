@@ -1,20 +1,24 @@
--- DQR modular runtime: core/MacroController.lua
--- Local macro recorder/player. Keeps macro ownership separate from the farm engine.
+-- DQR universal macro controller.
+-- Intentionally independent from dungeon combat profiles and PlaceId support.
 
-local MacroController = {}
-local MacroEnv = (type(getgenv) == "function" and getgenv()) or _G
-local MACRO_KEY = "__SERENITY_DQR_MACRO_V1"
-local UIS = game:GetService("UserInputService")
-local MacroRunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
 
-local VIM
+local LP = Players.LocalPlayer
+local ENV = (type(getgenv) == "function" and getgenv()) or _G
+local MACRO_KEY = "__SERENITY_DQR_MACRO_V2"
+
+local VirtualInputManager
 pcall(function()
-    VIM = game:GetService("VirtualInputManager")
+    VirtualInputManager = game:GetService("VirtualInputManager")
 end)
 
 local ROOT_DIR = "SerenityDQR"
 local MACRO_DIR = ROOT_DIR .. "/macros"
 local INDEX_PATH = MACRO_DIR .. "/index.json"
+
 local SAMPLE_INTERVAL = 0.10
 local AUTO_LOOP_DELAY = 0.75
 
@@ -26,7 +30,9 @@ local canIsFolder = type(isfolder) == "function"
 local canIsFile = type(isfile) == "function"
 local persistentStorage = canRead and canWrite
 
+local MacroController = {}
 local state = {
+    Alive = true,
     Macros = {},
     Selected = nil,
     Recording = false,
@@ -38,33 +44,35 @@ local state = {
     RecordConnections = {},
     RecordAccumulator = 0,
     PlayToken = 0,
-    FarmWasEnabled = nil,
     LastError = nil,
-    InputPlayback = VIM ~= nil,
+    InputPlayback = VirtualInputManager ~= nil,
+    FarmBridge = nil,
+    FarmWasEnabled = nil,
 }
 
 local listeners = {}
 local pressedKeys = {}
 
-local old = MacroEnv[MACRO_KEY]
+local old = ENV[MACRO_KEY] or ENV.__SERENITY_DQR_MACRO_V1
 if old and type(old.StopAll) == "function" then
     pcall(old.StopAll, "reexecute")
 end
 
 local function emit()
+    local snapshot = MacroController.Status()
     for _, fn in ipairs(listeners) do
-        pcall(fn, MacroController.Status())
+        pcall(fn, snapshot)
     end
 end
 
 local function setStatus(value, err)
-    state.Status = value
-    state.LastError = err
+    state.Status = tostring(value or "Idle")
+    state.LastError = err and tostring(err) or nil
     emit()
 end
 
-local function trim(s)
-    return tostring(s or ""):match("^%s*(.-)%s*$")
+local function trim(value)
+    return tostring(value or ""):match("^%s*(.-)%s*$")
 end
 
 local function validName(name)
@@ -107,15 +115,15 @@ local function ensureFolders()
     end)
 end
 
-local function indexNames()
-    local names = {}
+local function names()
+    local list = {}
     for name in pairs(state.Macros) do
-        names[#names + 1] = name
+        list[#list + 1] = name
     end
-    table.sort(names, function(a, b)
+    table.sort(list, function(a, b)
         return string.lower(a) < string.lower(b)
     end)
-    return names
+    return list
 end
 
 local function saveIndex()
@@ -124,9 +132,10 @@ local function saveIndex()
     end
 
     ensureFolders()
+
     local ok, encoded = pcall(HttpService.JSONEncode, HttpService, {
-        Schema = 1,
-        Names = indexNames(),
+        Schema = 2,
+        Names = names(),
     })
 
     if ok then
@@ -166,6 +175,7 @@ local function loadMacroFromDisk(name)
     end
 
     local path = macroPath(name)
+
     if canIsFile then
         local ok, exists = pcall(isfile, path)
         if not ok or not exists then
@@ -179,7 +189,10 @@ local function loadMacroFromDisk(name)
     end
 
     local decodedOk, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-    if decodedOk and type(decoded) == "table" and type(decoded.Events) == "table" then
+    if decodedOk
+        and type(decoded) == "table"
+        and type(decoded.Events) == "table"
+    then
         decoded.Name = tostring(decoded.Name or name)
         return decoded
     end
@@ -207,7 +220,10 @@ local function loadIndex()
     end
 
     local decodedOk, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-    if not decodedOk or type(decoded) ~= "table" or type(decoded.Names) ~= "table" then
+    if not decodedOk
+        or type(decoded) ~= "table"
+        or type(decoded.Names) ~= "table"
+    then
         return
     end
 
@@ -235,34 +251,48 @@ end
 
 local function liveCharacter(timeout)
     local deadline = os.clock() + (timeout or 0)
+
     repeat
-        local char = LP.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if char and hum and hum.Health > 0 and root then
-            return char, hum, root
+        local character = LP.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+
+        if character
+            and humanoid
+            and humanoid.Health > 0
+            and root
+        then
+            return character, humanoid, root
         end
+
         task.wait(0.05)
     until os.clock() >= deadline
+
     return nil, nil, nil
 end
 
 local function pauseFarm()
-    if state.FarmWasEnabled == nil then
-        state.FarmWasEnabled = CFG.ENABLED
-    end
-    CFG.ENABLED = false
-
-    if Runtime.Humanoid then
-        pcall(function()
-            if Runtime.Root then
-                Runtime.Humanoid:MoveTo(Runtime.Root.Position)
-            end
-            Runtime.Humanoid:Move(Vector3.zero, false)
-        end)
+    local bridge = state.FarmBridge
+    if not bridge then
+        return
     end
 
-    Runtime.MovementOwner = "MACRO"
+    if state.FarmWasEnabled == nil
+        and type(bridge.GetEnabled) == "function"
+    then
+        local ok, enabled = pcall(bridge.GetEnabled)
+        if ok then
+            state.FarmWasEnabled = enabled == true
+        end
+    end
+
+    if type(bridge.SetEnabled) == "function" then
+        pcall(bridge.SetEnabled, false)
+    end
+
+    if type(bridge.StopMovement) == "function" then
+        pcall(bridge.StopMovement)
+    end
 end
 
 local function restoreFarm()
@@ -270,20 +300,21 @@ local function restoreFarm()
         return
     end
 
-    if state.FarmWasEnabled ~= nil then
-        CFG.ENABLED = state.FarmWasEnabled
-        state.FarmWasEnabled = nil
+    local bridge = state.FarmBridge
+    if bridge
+        and state.FarmWasEnabled ~= nil
+        and type(bridge.SetEnabled) == "function"
+    then
+        pcall(bridge.SetEnabled, state.FarmWasEnabled)
     end
 
-    if Runtime.MovementOwner == "MACRO" then
-        Runtime.MovementOwner = "NONE"
-    end
+    state.FarmWasEnabled = nil
 end
 
 local function clearRecordConnections()
-    for _, c in ipairs(state.RecordConnections) do
+    for _, connection in ipairs(state.RecordConnections) do
         pcall(function()
-            c:Disconnect()
+            connection:Disconnect()
         end)
     end
     table.clear(state.RecordConnections)
@@ -296,12 +327,12 @@ local movementKeys = {
     D = true,
 }
 
-local function pointOverMacroUI(pos)
+local function pointOverMacroUI(position)
     if type(MacroController.IsPointOverUI) ~= "function" then
         return false
     end
 
-    local ok, result = pcall(MacroController.IsPointOverUI, pos)
+    local ok, result = pcall(MacroController.IsPointOverUI, position)
     return ok and result == true
 end
 
@@ -326,105 +357,131 @@ local function recordFrame(macro)
     })
 end
 
-local function connectRecord(signal, fn)
-    local c = signal:Connect(fn)
-    state.RecordConnections[#state.RecordConnections + 1] = c
-    return c
+local function connectRecord(signal, callback)
+    local connection = signal:Connect(callback)
+    state.RecordConnections[#state.RecordConnections + 1] = connection
+    return connection
 end
 
 local function attachRecordListeners(macro)
     state.RecordAccumulator = 0
 
-    connectRecord(MacroRunService.Heartbeat, function(dt)
+    connectRecord(RunService.Heartbeat, function(dt)
         if not state.Recording then
             return
         end
 
         state.RecordAccumulator += dt
+
         if state.RecordAccumulator >= SAMPLE_INTERVAL then
-            state.RecordAccumulator = state.RecordAccumulator % SAMPLE_INTERVAL
+            state.RecordAccumulator =
+                state.RecordAccumulator % SAMPLE_INTERVAL
             recordFrame(macro)
         end
     end)
 
-    connectRecord(UIS.InputBegan, function(input)
-        if not state.Recording or UIS:GetFocusedTextBox() then
+    connectRecord(UserInputService.InputBegan, function(input)
+        if not state.Recording or UserInputService:GetFocusedTextBox() then
             return
         end
 
         if input.UserInputType == Enum.UserInputType.Keyboard then
             local key = input.KeyCode.Name
-            if key ~= "Unknown" and not movementKeys[key] and key ~= "Space" then
+
+            if key ~= "Unknown"
+                and not movementKeys[key]
+                and key ~= "Space"
+            then
                 addEvent(macro, {
                     type = "key",
                     key = key,
                     down = true,
                 })
             end
+
         elseif input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.MouseButton2
         then
-            local pos = UIS:GetMouseLocation()
-            if pointOverMacroUI(pos) then
+            local position = UserInputService:GetMouseLocation()
+
+            if pointOverMacroUI(position) then
                 return
             end
 
-            local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+            local camera = workspace.CurrentCamera
+            local viewport = camera and camera.ViewportSize
+
             if viewport and viewport.X > 0 and viewport.Y > 0 then
                 addEvent(macro, {
                     type = "mouse",
-                    button = input.UserInputType == Enum.UserInputType.MouseButton1 and 0 or 1,
+                    button =
+                        input.UserInputType == Enum.UserInputType.MouseButton1
+                        and 0
+                        or 1,
                     down = true,
-                    x = pos.X / viewport.X,
-                    y = pos.Y / viewport.Y,
+                    x = position.X / viewport.X,
+                    y = position.Y / viewport.Y,
                 })
             end
         end
     end)
 
-    connectRecord(UIS.InputEnded, function(input)
-        if not state.Recording or UIS:GetFocusedTextBox() then
+    connectRecord(UserInputService.InputEnded, function(input)
+        if not state.Recording or UserInputService:GetFocusedTextBox() then
             return
         end
 
         if input.UserInputType == Enum.UserInputType.Keyboard then
             local key = input.KeyCode.Name
-            if key ~= "Unknown" and not movementKeys[key] and key ~= "Space" then
+
+            if key ~= "Unknown"
+                and not movementKeys[key]
+                and key ~= "Space"
+            then
                 addEvent(macro, {
                     type = "key",
                     key = key,
                     down = false,
                 })
             end
+
         elseif input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.MouseButton2
         then
-            local pos = UIS:GetMouseLocation()
-            if pointOverMacroUI(pos) then
+            local position = UserInputService:GetMouseLocation()
+
+            if pointOverMacroUI(position) then
                 return
             end
 
-            local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+            local camera = workspace.CurrentCamera
+            local viewport = camera and camera.ViewportSize
+
             if viewport and viewport.X > 0 and viewport.Y > 0 then
                 addEvent(macro, {
                     type = "mouse",
-                    button = input.UserInputType == Enum.UserInputType.MouseButton1 and 0 or 1,
+                    button =
+                        input.UserInputType == Enum.UserInputType.MouseButton1
+                        and 0
+                        or 1,
                     down = false,
-                    x = pos.X / viewport.X,
-                    y = pos.Y / viewport.Y,
+                    x = position.X / viewport.X,
+                    y = position.Y / viewport.Y,
                 })
             end
         end
     end)
 
     local function bindHumanoid()
-        local _, hum = liveCharacter(1)
-        if not hum then
+        local _, humanoid = liveCharacter(1)
+        if not humanoid then
             return
         end
 
-        connectRecord(hum.StateChanged, function(_, newState)
-            if state.Recording and newState == Enum.HumanoidStateType.Jumping then
+        connectRecord(humanoid.StateChanged, function(_, newState)
+            if state.Recording
+                and newState == Enum.HumanoidStateType.Jumping
+            then
                 addEvent(macro, {type = "jump"})
             end
         end)
@@ -433,15 +490,14 @@ local function attachRecordListeners(macro)
     bindHumanoid()
 
     connectRecord(LP.CharacterAdded, function()
-        if not state.Recording then
-            return
+        if state.Recording then
+            task.delay(0.25, bindHumanoid)
         end
-        task.delay(0.25, bindHumanoid)
     end)
 end
 
 local function sendKey(keyName, down)
-    if not VIM then
+    if not VirtualInputManager then
         return false
     end
 
@@ -451,7 +507,12 @@ local function sendKey(keyName, down)
     end
 
     local ok = pcall(function()
-        VIM:SendKeyEvent(down == true, keyCode, false, game)
+        VirtualInputManager:SendKeyEvent(
+            down == true,
+            keyCode,
+            false,
+            game
+        )
     end)
 
     if ok then
@@ -474,14 +535,25 @@ end
 
 local function applyEvent(event)
     if event.type == "frame" then
-        local _, hum = liveCharacter(2)
-        if hum and type(event.p) == "table" and #event.p >= 3 then
-            hum:MoveTo(Vector3.new(event.p[1], event.p[2], event.p[3]))
+        local _, humanoid = liveCharacter(2)
+
+        if humanoid
+            and type(event.p) == "table"
+            and #event.p >= 3
+        then
+            humanoid:MoveTo(
+                Vector3.new(
+                    event.p[1],
+                    event.p[2],
+                    event.p[3]
+                )
+            )
         end
 
         if event.camera then
             local cf = unpackCFrame(event.camera)
             local camera = workspace.CurrentCamera
+
             if cf and camera then
                 pcall(function()
                     camera.CFrame = cf
@@ -490,25 +562,35 @@ local function applyEvent(event)
         end
 
     elseif event.type == "jump" then
-        local _, hum = liveCharacter(1)
-        if hum then
+        local _, humanoid = liveCharacter(1)
+        if humanoid then
             pcall(function()
-                hum.Jump = true
+                humanoid.Jump = true
             end)
         end
 
     elseif event.type == "key" then
         sendKey(tostring(event.key or ""), event.down == true)
 
-    elseif event.type == "mouse" and VIM then
+    elseif event.type == "mouse" and VirtualInputManager then
         local camera = workspace.CurrentCamera
         local viewport = camera and camera.ViewportSize
+
         if viewport and viewport.X > 0 and viewport.Y > 0 then
-            local x = math.floor(math.clamp(tonumber(event.x) or 0, 0, 1) * viewport.X)
-            local y = math.floor(math.clamp(tonumber(event.y) or 0, 0, 1) * viewport.Y)
+            local x =
+                math.floor(
+                    math.clamp(tonumber(event.x) or 0, 0, 1)
+                    * viewport.X
+                )
+
+            local y =
+                math.floor(
+                    math.clamp(tonumber(event.y) or 0, 0, 1)
+                    * viewport.Y
+                )
 
             pcall(function()
-                VIM:SendMouseButtonEvent(
+                VirtualInputManager:SendMouseButtonEvent(
                     x,
                     y,
                     tonumber(event.button) or 0,
@@ -522,23 +604,27 @@ local function applyEvent(event)
 end
 
 local function playBlocking(macro, token, loopIndex)
-    if not macro or type(macro.Events) ~= "table" or #macro.Events == 0 then
+    if not macro
+        or type(macro.Events) ~= "table"
+        or #macro.Events == 0
+    then
         return false, "Macro has no recorded events"
     end
 
     state.Playing = true
     pauseFarm()
+
     setStatus(
         state.Auto
-            and ("Auto Macro • Loop " .. tostring(loopIndex or 1))
-            or "Playing Macro"
+        and ("Auto Macro • Loop " .. tostring(loopIndex or 1))
+        or "Playing Macro"
     )
 
     local started = os.clock()
     local index = 1
 
-    while index <= #macro.Events do
-        if token ~= state.PlayToken or not Runtime.Alive then
+    while state.Alive and index <= #macro.Events do
+        if token ~= state.PlayToken then
             break
         end
 
@@ -556,21 +642,32 @@ local function playBlocking(macro, token, loopIndex)
 
     releasePressedKeys()
 
-    local _, hum = liveCharacter(0)
-    if hum then
+    local _, humanoid, root = liveCharacter(0)
+    if humanoid then
         pcall(function()
-            hum:Move(Vector3.zero, false)
+            if root then
+                humanoid:MoveTo(root.Position)
+            end
+            humanoid:Move(Vector3.zero, false)
         end)
     end
 
     state.Playing = false
 
-    if token ~= state.PlayToken then
-        setStatus(state.Auto and "Auto Macro stopped" or "Playback stopped")
+    if token ~= state.PlayToken or not state.Alive then
         return false, "Stopped"
     end
 
     return true
+end
+
+function MacroController.AttachFarm(bridge)
+    state.FarmBridge =
+        type(bridge) == "table"
+        and bridge
+        or nil
+
+    emit()
 end
 
 function MacroController.Create(name)
@@ -591,12 +688,14 @@ function MacroController.Create(name)
     end
 
     local macro = {
-        Schema = 1,
+        Schema = 2,
         Name = valid,
         CreatedAt = os.time(),
         UpdatedAt = os.time(),
         Duration = 0,
         SampleInterval = SAMPLE_INTERVAL,
+        UniverseId = game.GameId,
+        CreatedPlaceId = game.PlaceId,
         Events = {},
     }
 
@@ -617,6 +716,7 @@ function MacroController.Delete(name)
     end
 
     name = name or state.Selected
+
     if not name or not state.Macros[name] then
         return false, "Select a macro"
     end
@@ -626,6 +726,7 @@ function MacroController.Delete(name)
     if persistentStorage and canDelete then
         pcall(function()
             local path = macroPath(name)
+
             if not canIsFile or isfile(path) then
                 delfile(path)
             end
@@ -635,8 +736,8 @@ function MacroController.Delete(name)
     saveIndex()
 
     if state.Selected == name then
-        local names = indexNames()
-        state.Selected = names[1]
+        local list = names()
+        state.Selected = list[1]
     end
 
     setStatus("Macro deleted")
@@ -649,7 +750,8 @@ function MacroController.Select(name)
         setStatus("Macro selected")
         return true
     end
-    return false
+
+    return false, "Macro not found"
 end
 
 function MacroController.StartRecording(name)
@@ -659,6 +761,7 @@ function MacroController.StartRecording(name)
 
     name = name or state.Selected
     local macro = name and state.Macros[name]
+
     if not macro then
         return false, "Create or select a macro first"
     end
@@ -670,14 +773,17 @@ function MacroController.StartRecording(name)
     macro.Events = {}
     macro.Duration = 0
     macro.UpdatedAt = os.time()
+    macro.RecordedUniverseId = game.GameId
+    macro.RecordedPlaceId = game.PlaceId
 
     state.Selected = macro.Name
     state.Recording = true
     state.RecordingStartedAt = os.clock()
-    pauseFarm()
 
+    pauseFarm()
     recordFrame(macro)
     attachRecordListeners(macro)
+
     setStatus("Recording • move/play normally")
     return true
 end
@@ -687,10 +793,17 @@ function MacroController.StopRecording(save)
         return false, "Not recording"
     end
 
-    local macro = state.Selected and state.Macros[state.Selected]
+    local macro =
+        state.Selected
+        and state.Macros[state.Selected]
+
     if macro then
         recordFrame(macro)
-        macro.Duration = math.max(0, os.clock() - state.RecordingStartedAt)
+        macro.Duration =
+            math.max(
+                0,
+                os.clock() - state.RecordingStartedAt
+            )
         macro.UpdatedAt = os.time()
     end
 
@@ -698,6 +811,7 @@ function MacroController.StopRecording(save)
     clearRecordConnections()
 
     local ok, err = true, nil
+
     if save ~= false and macro then
         ok, err = saveMacro(macro)
     end
@@ -720,20 +834,25 @@ function MacroController.PlayOnce(name)
 
     name = name or state.Selected
     local macro = name and state.Macros[name]
+
     if not macro then
         return false, "Select a macro"
     end
+
     if #macro.Events == 0 then
         return false, "Macro is empty"
     end
 
     state.Selected = name
     state.PlayToken += 1
+
     local token = state.PlayToken
 
     task.spawn(function()
         local ok, err = playBlocking(macro, token, 1)
+
         restoreFarm()
+
         if ok then
             setStatus("Playback complete")
         elseif err and err ~= "Stopped" then
@@ -752,37 +871,58 @@ function MacroController.SetAuto(enabled)
             return false, "Stop the active macro first"
         end
 
-        local macro = state.Selected and state.Macros[state.Selected]
+        local macro =
+            state.Selected
+            and state.Macros[state.Selected]
+
         if not macro or #macro.Events == 0 then
             return false, "Select a recorded macro"
         end
 
         state.Auto = true
         state.PlayToken += 1
+
         local token = state.PlayToken
+
         pauseFarm()
 
         task.spawn(function()
             local loopIndex = 1
 
-            while state.Auto
+            while state.Alive
+                and state.Auto
                 and token == state.PlayToken
-                and Runtime.Alive
             do
-                local selected = state.Selected and state.Macros[state.Selected]
-                if not selected or #selected.Events == 0 then
+                local selected =
+                    state.Selected
+                    and state.Macros[state.Selected]
+
+                if not selected
+                    or #selected.Events == 0
+                then
                     break
                 end
 
-                local ok = playBlocking(selected, token, loopIndex)
-                if not ok or token ~= state.PlayToken then
+                local ok =
+                    playBlocking(
+                        selected,
+                        token,
+                        loopIndex
+                    )
+
+                if not ok
+                    or token ~= state.PlayToken
+                then
                     break
                 end
 
                 loopIndex += 1
 
-                local untilTime = os.clock() + AUTO_LOOP_DELAY
-                while state.Auto
+                local untilTime =
+                    os.clock() + AUTO_LOOP_DELAY
+
+                while state.Alive
+                    and state.Auto
                     and token == state.PlayToken
                     and os.clock() < untilTime
                 do
@@ -794,7 +934,9 @@ function MacroController.SetAuto(enabled)
             state.Playing = false
             restoreFarm()
 
-            if token == state.PlayToken then
+            if state.Alive
+                and token == state.PlayToken
+            then
                 setStatus("Auto Macro stopped")
             end
         end)
@@ -807,6 +949,7 @@ function MacroController.SetAuto(enabled)
         state.Auto = false
         state.PlayToken += 1
         state.Playing = false
+
         releasePressedKeys()
         restoreFarm()
         setStatus("Auto Macro stopped")
@@ -823,8 +966,10 @@ function MacroController.StopPlayback()
     state.Auto = false
     state.PlayToken += 1
     state.Playing = false
+
     releasePressedKeys()
     restoreFarm()
+
     setStatus("Playback stopped")
     return true
 end
@@ -835,24 +980,35 @@ function MacroController.Refresh()
         loadIndex()
     end
 
-    local names = indexNames()
-    if state.Selected and not state.Macros[state.Selected] then
+    local list = names()
+
+    if state.Selected
+        and not state.Macros[state.Selected]
+    then
         state.Selected = nil
     end
+
     if not state.Selected then
-        state.Selected = names[1]
+        state.Selected = list[1]
     end
 
     emit()
-    return names
+    return list
 end
 
 function MacroController.List()
-    return indexNames()
+    return names()
+end
+
+function MacroController.Get(name)
+    return state.Macros[name or state.Selected]
 end
 
 function MacroController.Status()
-    local selected = state.Selected and state.Macros[state.Selected]
+    local selected =
+        state.Selected
+        and state.Macros[state.Selected]
+
     return {
         Selected = state.Selected,
         Recording = state.Recording,
@@ -863,29 +1019,44 @@ function MacroController.Status()
         InputPlayback = state.InputPlayback,
         Duration =
             state.Recording
-            and math.max(0, os.clock() - state.RecordingStartedAt)
-            or (selected and tonumber(selected.Duration) or 0),
-        Events = selected and #selected.Events or 0,
-        Count = #indexNames(),
+            and math.max(
+                0,
+                os.clock() - state.RecordingStartedAt
+            )
+            or (
+                selected
+                and tonumber(selected.Duration)
+                or 0
+            ),
+        Events =
+            selected
+            and #selected.Events
+            or 0,
+        Count = #names(),
         Error = state.LastError,
+        FarmAttached = state.FarmBridge ~= nil,
+        UniverseId = game.GameId,
+        PlaceId = game.PlaceId,
     }
 end
 
-function MacroController.OnChanged(fn)
-    if type(fn) ~= "function" then
+function MacroController.OnChanged(callback)
+    if type(callback) ~= "function" then
         return function() end
     end
 
-    listeners[#listeners + 1] = fn
+    listeners[#listeners + 1] = callback
     local alive = true
 
     return function()
         if not alive then
             return
         end
+
         alive = false
+
         for i = #listeners, 1, -1 do
-            if listeners[i] == fn then
+            if listeners[i] == callback then
                 table.remove(listeners, i)
                 break
             end
@@ -894,6 +1065,10 @@ function MacroController.OnChanged(fn)
 end
 
 function MacroController.StopAll(reason)
+    if not state.Alive then
+        return
+    end
+
     if state.Recording then
         pcall(MacroController.StopRecording, true)
     end
@@ -901,20 +1076,41 @@ function MacroController.StopAll(reason)
     state.Auto = false
     state.PlayToken += 1
     state.Playing = false
+
     clearRecordConnections()
     releasePressedKeys()
     restoreFarm()
-    setStatus(reason and ("Stopped • " .. tostring(reason)) or "Stopped")
+
+    setStatus(
+        reason
+        and ("Stopped • " .. tostring(reason))
+        or "Stopped"
+    )
+end
+
+function MacroController.Destroy(reason)
+    if not state.Alive then
+        return
+    end
+
+    MacroController.StopAll(reason or "destroy")
+    state.Alive = false
+    listeners = {}
+
+    if ENV[MACRO_KEY] == MacroController then
+        ENV[MACRO_KEY] = nil
+    end
+
+    if ENV.DQRMacro == MacroController then
+        ENV.DQRMacro = nil
+    end
 end
 
 loadIndex()
 MacroController.Refresh()
 
-MacroEnv[MACRO_KEY] = MacroController
-MacroEnv.DQRMacro = MacroController
+ENV[MACRO_KEY] = MacroController
+ENV.DQRMacro = MacroController
 
-if type(ENV.DQR) == "table" then
-    ENV.DQR.Macro = MacroController
-end
-
-Runtime.MacroController = MacroController
+-- Expose into the shared bootstrap environment too.
+DQR_MACRO = MacroController
