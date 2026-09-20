@@ -54,7 +54,9 @@ local listeners = {}
 local pressedKeys = {}
 
 local old = ENV[MACRO_KEY] or ENV.__SERENITY_DQR_MACRO_V1
-if old and type(old.StopAll) == "function" then
+if old and type(old.Destroy) == "function" then
+    pcall(old.Destroy, "reexecute")
+elseif old and type(old.StopAll) == "function" then
     pcall(old.StopAll, "reexecute")
 end
 
