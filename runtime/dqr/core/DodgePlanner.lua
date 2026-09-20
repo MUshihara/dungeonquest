@@ -129,7 +129,12 @@ function groundBelow(point, depth)
     )
 end
 
-function safeMovementDestination(point, origin, allowLevelChange)
+function safeMovementDestination(
+    point,
+    origin,
+    allowLevelChange,
+    pathfinderWaypoint
+)
     if not point then
         return false, "nil"
     end
@@ -159,6 +164,15 @@ function safeMovementDestination(point, origin, allowLevelChange)
                 - CFG.VOID_DROP_TRIGGER
     then
         return false, "below_safe_anchor"
+    end
+
+    -- A waypoint returned by a successful PathfindingService path is already
+    -- navmesh-validated. The room7->room8 bridge/corridor in Samurai Palace
+    -- is raycast-unfriendly and V1.1 rejected the same valid waypoint for
+    -- minutes as "ground_gap". Keep vertical/void-anchor guards above, but do
+    -- not second-guess the navmesh with this separate downward-ray heuristic.
+    if pathfinderWaypoint then
+        return true, "pathfinder_waypoint"
     end
 
     local ground =
