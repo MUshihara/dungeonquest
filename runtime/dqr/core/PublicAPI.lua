@@ -141,7 +141,7 @@ ENV.DQR = {
 }
 
 logKV("START", {
-    version = "Modular_V1_2",
+    version = "Modular_V1_3",
     dungeon = DQR_WORLD and DQR_WORLD.Name or "Unknown",
     style = CFG.STYLE,
     place_id = game.PlaceId,
@@ -177,6 +177,10 @@ logKV("START", {
     golem_small_landing_memory = true,
     pathfinder_waypoint_trust = true,
     shuriken_short_axis_escape = true,
+    boss_level_transit_owner = true,
+    vertical_threat_geometry = true,
+    samurai_boss_dps_range_guard = true,
+    samurai_local_wave_radius_max = 22,
 
     direct_shift_governor = true,
     direct_shift_cooldown =
