@@ -1610,12 +1610,149 @@ local function stopHumanoid()
     end
 end
 
+local function pathRecoverTo(target, token)
+    local _, humanoid, root =
+        liveCharacter(2)
+
+    if not humanoid or not root then
+        return false, "character_unavailable"
+    end
+
+    local path =
+        PathfindingService:CreatePath({
+            AgentRadius = 2,
+            AgentHeight = 5,
+            AgentCanJump = true,
+            AgentCanClimb = true,
+            WaypointSpacing = 3.5,
+        })
+
+    local ok =
+        pcall(
+            path.ComputeAsync,
+            path,
+            root.Position,
+            target
+        )
+
+    if not ok
+        or path.Status
+            ~= Enum.PathStatus.Success
+    then
+        return false, "path_compute_failed"
+    end
+
+    local waypoints =
+        path:GetWaypoints()
+
+    if #waypoints == 0 then
+        return false, "path_empty"
+    end
+
+    for index = 2, #waypoints do
+        if not state.Alive
+            or token ~= state.PlayToken
+        then
+            return false, "stopped"
+        end
+
+        local waypoint =
+            waypoints[index]
+
+        local _, liveHumanoid, liveRoot =
+            liveCharacter(1)
+
+        if not liveHumanoid
+            or not liveRoot
+        then
+            return false, "character_unavailable"
+        end
+
+        humanoid = liveHumanoid
+        root = liveRoot
+
+        if waypoint.Action
+            == Enum.PathWaypointAction.Jump
+        then
+            pcall(function()
+                humanoid.Jump = true
+            end)
+        end
+
+        pcall(function()
+            humanoid:MoveTo(
+                waypoint.Position
+            )
+        end)
+
+        local distance =
+            (
+                root.Position
+                - waypoint.Position
+            ).Magnitude
+
+        local walkSpeed =
+            math.max(
+                tonumber(humanoid.WalkSpeed)
+                or 16,
+                1
+            )
+
+        local deadline =
+            os.clock()
+            + math.clamp(
+                distance / walkSpeed
+                    * 2.0
+                    + 0.45,
+                0.55,
+                2.50
+            )
+
+        while state.Alive
+            and token == state.PlayToken
+            and os.clock() < deadline
+        do
+            local _, _, currentRoot =
+                liveCharacter(0)
+
+            if currentRoot then
+                local delta =
+                    currentRoot.Position
+                    - waypoint.Position
+
+                if Vector3.new(
+                    delta.X,
+                    0,
+                    delta.Z
+                ).Magnitude <= 1.65
+                    and math.abs(delta.Y) <= 4.0
+                then
+                    break
+                end
+            end
+
+            task.wait(0.035)
+        end
+    end
+
+    local _, _, finalRoot =
+        liveCharacter(0)
+
+    if finalRoot
+        and reached(finalRoot, target)
+    then
+        return true
+    end
+
+    return false, "path_did_not_reconnect"
+end
+
 local function routeMoveTo(target, token)
     local _, humanoid, root =
         liveCharacter(2)
 
     if not humanoid or not root then
-        return false, "Character unavailable"
+        return false, "character_unavailable"
     end
 
     local distance =
@@ -1696,7 +1833,6 @@ local function routeMoveTo(target, token)
         if os.clock() - lastProgressAt
             >= STUCK_WINDOW
         then
-            -- Ordinary recovery only. No positional CFrame teleport.
             pcall(function()
                 humanoid.Jump = true
                 humanoid:MoveTo(
@@ -1714,7 +1850,32 @@ local function routeMoveTo(target, token)
         task.wait(0.03)
     end
 
-    return false, "waypoint_timeout"
+    if not state.Alive
+        or token ~= state.PlayToken
+    then
+        return false, "stopped"
+    end
+
+    state.LastFallback =
+        "Path recovery"
+
+    actionLog(
+        "PLAY",
+        "ROUTE_RECOVERY",
+        {
+            distance =
+                string.format(
+                    "%.1f",
+                    bestDistance
+                ),
+        }
+    )
+
+    return
+        pathRecoverTo(
+            target,
+            token
+        )
 end
 
 local function abilityTool(slot, preferredName)
@@ -2117,10 +2278,34 @@ local function playBlocking(macro, token, loopIndex)
                 )
 
             if target then
-                routeMoveTo(
-                    target,
-                    token
-                )
+                local moved, moveErr =
+                    routeMoveTo(
+                        target,
+                        token
+                    )
+
+                if not moved then
+                    state.Playing = false
+                    state.LastFallback =
+                        "Route failed • "
+                        .. tostring(moveErr)
+
+                    actionLog(
+                        "PLAY",
+                        "ROUTE_STOP",
+                        {
+                            reason =
+                                tostring(moveErr),
+                            index =
+                                targetIndex,
+                        }
+                    )
+
+                    return
+                        false,
+                        "route_unreachable:"
+                        .. tostring(moveErr)
+                end
             end
 
             index =
