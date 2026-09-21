@@ -918,6 +918,20 @@ local function beginEncounter(macro)
         return
     end
 
+    local active =
+        state.ActiveEncounter
+
+    if active
+        and active.room
+        and Context
+        and type(Context.RoomAt) == "function"
+        and Context.RoomAt(root.Position)
+            == active.room
+    then
+        active.LastLiveAt = os.clock()
+        return
+    end
+
     local snapshot =
         Combat.Snapshot(
             root.Position,
@@ -931,7 +945,7 @@ local function beginEncounter(macro)
         return
     end
 
-    local active =
+    active =
         state.ActiveEncounter
 
     if active
