@@ -14,10 +14,11 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local PathfindingService = game:GetService("PathfindingService")
+local UserInputService = game:GetService("UserInputService")
 
 local LP = Players.LocalPlayer
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
-local MACRO_KEY = "__SERENITY_DQR_MACRO_V5"
+local MACRO_KEY = "__SERENITY_DQR_MACRO_V6"
 
 local Context = DQR_MACRO_CONTEXT
 local Combat = DQR_MACRO_COMBAT
@@ -100,6 +101,13 @@ local state = {
     ActiveEncounter = nil,
     EncounterAccumulator = 0,
     LastFallback = "None",
+    LastMatchLog = "None",
+
+    OrientationConnection = nil,
+    OrientationDirection = nil,
+    OrientationHumanoid = nil,
+    OrientationPreviousAutoRotate = nil,
+    OrientationActive = false,
 
     PlayToken = 0,
 
@@ -111,6 +119,7 @@ local listeners = {}
 
 local old =
     ENV[MACRO_KEY]
+    or ENV.__SERENITY_DQR_MACRO_V5
     or ENV.__SERENITY_DQR_MACRO_V4
     or ENV.__SERENITY_DQR_MACRO_V3
     or ENV.__SERENITY_DQR_MACRO_V2
@@ -298,35 +307,182 @@ local function captureLook()
     }
 end
 
-local function faceRecordedDirection(event)
-    if not event
-        or type(event.look) ~= "table"
-        or #event.look < 2
+local function isShiftLocked()
+    return
+        UserInputService.MouseBehavior
+            == Enum.MouseBehavior.LockCenter
+end
+
+local function lookVectorFromData(look)
+    if type(look) ~= "table"
+        or #look < 2
     then
-        return
-    end
-
-    local _, humanoid, root =
-        liveCharacter(0)
-
-    if not humanoid or not root then
-        return
+        return nil
     end
 
     local direction =
         Vector3.new(
-            tonumber(event.look[1]) or 0,
+            tonumber(look[1]) or 0,
             0,
-            tonumber(event.look[2]) or 0
+            tonumber(look[2]) or 0
         )
 
     if direction.Magnitude < 0.001 then
+        return nil
+    end
+
+    return direction.Unit
+end
+
+local function stopOrientationLock()
+    if state.OrientationConnection then
+        pcall(function()
+            state.OrientationConnection:Disconnect()
+        end)
+    end
+
+    state.OrientationConnection = nil
+    state.OrientationDirection = nil
+    state.OrientationActive = false
+
+    if state.OrientationHumanoid
+        and state.OrientationHumanoid.Parent
+        and state.OrientationPreviousAutoRotate ~= nil
+    then
+        pcall(function()
+            state.OrientationHumanoid.AutoRotate =
+                state.OrientationPreviousAutoRotate
+        end)
+    end
+
+    state.OrientationHumanoid = nil
+    state.OrientationPreviousAutoRotate = nil
+end
+
+local function ensureOrientationHumanoid(humanoid)
+    if not humanoid then
         return
     end
 
-    direction = direction.Unit
+    if state.OrientationHumanoid == humanoid then
+        pcall(function()
+            humanoid.AutoRotate = false
+        end)
+        return
+    end
 
-    -- Rotation only. Position is preserved exactly.
+    if state.OrientationHumanoid
+        and state.OrientationHumanoid.Parent
+        and state.OrientationPreviousAutoRotate ~= nil
+    then
+        pcall(function()
+            state.OrientationHumanoid.AutoRotate =
+                state.OrientationPreviousAutoRotate
+        end)
+    end
+
+    state.OrientationHumanoid = humanoid
+    state.OrientationPreviousAutoRotate =
+        humanoid.AutoRotate
+
+    pcall(function()
+        humanoid.AutoRotate = false
+    end)
+end
+
+local function startOrientationLock(look)
+    local direction =
+        lookVectorFromData(look)
+
+    if not direction then
+        return false
+    end
+
+    state.OrientationDirection = direction
+    state.OrientationActive = true
+
+    if state.OrientationConnection then
+        return true
+    end
+
+    state.OrientationConnection =
+        RunService.RenderStepped:Connect(function()
+            if not state.Alive
+                or not state.Playing
+                or not state.OrientationActive
+            then
+                return
+            end
+
+            local _, humanoid, root =
+                liveCharacter(0)
+
+            if not humanoid
+                or not root
+                or not state.OrientationDirection
+            then
+                return
+            end
+
+            ensureOrientationHumanoid(humanoid)
+
+            local direction =
+                state.OrientationDirection
+
+            pcall(function()
+                root.CFrame =
+                    CFrame.lookAt(
+                        root.Position,
+                        root.Position + direction
+                    )
+            end)
+        end)
+
+    return true
+end
+
+local function applyRecordedOrientation(event, macro)
+    local shouldLock =
+        event
+        and (
+            event.shiftLocked == true
+            or (
+                event.shiftLocked == nil
+                and macro
+                and macro.ShiftLockRecorded == true
+            )
+        )
+
+    if shouldLock
+        and event
+        and event.look
+    then
+        startOrientationLock(
+            event.look
+        )
+    elseif event
+        and event.shiftLocked == false
+    then
+        stopOrientationLock()
+    end
+end
+
+local function faceRecordedDirection(event)
+    local direction =
+        event
+        and lookVectorFromData(event.look)
+
+    if not direction then
+        return
+    end
+
+    local _, _, root =
+        liveCharacter(0)
+
+    if not root then
+        return
+    end
+
     pcall(function()
         root.CFrame =
             CFrame.lookAt(
@@ -373,6 +529,12 @@ local function sanitizeMacro(macro, fallbackName)
                     type(event.context) == "table"
                     and event.context
                     or nil,
+                look =
+                    type(event.look) == "table"
+                    and event.look
+                    or nil,
+                shiftLocked =
+                    event.shiftLocked == true,
             }
 
         elseif type(event) == "table"
@@ -436,8 +598,8 @@ local function sanitizeMacro(macro, fallbackName)
         return (a.t or 0) < (b.t or 0)
     end)
 
-    macro.Schema = 5
-    macro.Mode = "ContextRouteCombatRecovery"
+    macro.Schema = 6
+    macro.Mode = "ContextRouteCombatRecoveryShiftLock"
 
     macro.Name =
         tostring(
@@ -464,7 +626,7 @@ local function saveIndex()
             HttpService.JSONEncode,
             HttpService,
             {
-                Schema = 5,
+                Schema = 6,
                 Names = names(),
             }
         )
@@ -790,6 +952,13 @@ local function recordMove(macro, force)
         and Context.Capture(position)
         or nil
 
+    local shiftLocked =
+        isShiftLocked()
+
+    if shiftLocked then
+        macro.ShiftLockRecorded = true
+    end
+
     addEvent(
         macro,
         {
@@ -800,6 +969,8 @@ local function recordMove(macro, force)
                 position.Z,
             },
             context = pointContext,
+            look = captureLook(),
+            shiftLocked = shiftLocked,
         }
     )
 
@@ -2234,6 +2405,8 @@ local function playBlocking(macro, token, loopIndex)
         end
     end
 
+    stopOrientationLock()
+
     state.Playing = true
     pauseFarm()
 
@@ -2257,6 +2430,11 @@ local function playBlocking(macro, token, loopIndex)
             events[index]
 
         if event.type == "move" then
+            applyRecordedOrientation(
+                event,
+                macro
+            )
+
             local targetIndex =
                 index
 
@@ -2299,6 +2477,7 @@ local function playBlocking(macro, token, loopIndex)
 
                 if not moved then
                     state.Playing = false
+                    stopOrientationLock()
                     state.LastFallback =
                         "Route failed • "
                         .. tostring(moveErr)
@@ -2340,10 +2519,18 @@ local function playBlocking(macro, token, loopIndex)
             index += 1
 
         elseif event.type == "attack" then
+            applyRecordedOrientation(
+                event,
+                macro
+            )
             replayAttack(event)
             index += 1
 
         elseif event.type == "skill" then
+            applyRecordedOrientation(
+                event,
+                macro
+            )
             replaySkill(event)
             index += 1
 
@@ -2361,6 +2548,7 @@ local function playBlocking(macro, token, loopIndex)
 
             if #pending > 0 then
                 stopHumanoid()
+                stopOrientationLock()
 
                 local room =
                     tostring(
@@ -2399,11 +2587,17 @@ local function playBlocking(macro, token, loopIndex)
                                     or token
                                         ~= state.PlayToken
                             end,
+                            MatchLog = function(path)
+                                state.LastMatchLog =
+                                    tostring(path or "console")
+                                emit()
+                            end,
                         }
                     )
 
                 if not ok then
                     state.Playing = false
+                    stopOrientationLock()
                     state.LastFallback =
                         "Failed • "
                         .. tostring(err)
@@ -2446,6 +2640,7 @@ local function playBlocking(macro, token, loopIndex)
     end
 
     stopHumanoid()
+    stopOrientationLock()
     state.Playing = false
 
     if token ~= state.PlayToken
@@ -2502,8 +2697,8 @@ function MacroController.Create(name)
     end
 
     local macro = {
-        Schema = 5,
-        Mode = "ContextRouteCombatRecovery",
+        Schema = 6,
+        Mode = "ContextRouteCombatRecoveryShiftLock",
 
         Name = valid,
         CreatedAt = os.time(),
@@ -2620,13 +2815,15 @@ function MacroController.StartRecording(name)
         return false, "Already recording"
     end
 
-    macro.Schema = 5
-    macro.Mode = "ContextRouteCombatRecovery"
+    macro.Schema = 6
+    macro.Mode = "ContextRouteCombatRecoveryShiftLock"
     macro.Events = {}
     macro.Duration = 0
     macro.UpdatedAt = os.time()
     macro.RecordedUniverseId = game.GameId
     macro.RecordedPlaceId = game.PlaceId
+    macro.ShiftLockRecorded =
+        isShiftLocked()
     macro.Environment =
         Context
         and Context.Environment()
@@ -2967,6 +3164,7 @@ function MacroController.StopPlayback()
     state.Playing = false
 
     stopHumanoid()
+    stopOrientationLock()
     restoreFarm()
 
     setStatus(
@@ -3076,9 +3274,16 @@ function MacroController.Status()
 
         Status = state.Status,
         Storage = state.Storage,
-        Mode = "High-fidelity room route + semantic combat + recovery",
+        Mode = "Room route + semantic combat + recovery + persistent shift lock",
         LastAction = state.LastAction,
         LastFallback = state.LastFallback,
+        LastMatchLog = state.LastMatchLog,
+        ShiftLockRecorded =
+            selected
+            and selected.ShiftLockRecorded == true
+            or false,
+        ShiftLockPlayback =
+            state.OrientationActive == true,
 
         Duration =
             state.Recording
@@ -3171,6 +3376,7 @@ function MacroController.StopAll(reason)
 
     clearRecordConnections()
     stopHumanoid()
+    stopOrientationLock()
     restoreFarm()
 
     setStatus(
