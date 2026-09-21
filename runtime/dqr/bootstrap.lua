@@ -170,6 +170,10 @@ local function runShared(path)
 end
 
 -- Macro is universal and never depends on a supported combat map.
+-- Place context anchors routes to rooms; combat fallback only wakes at
+-- recorded fight checkpoints that still have living enemies.
+runShared("core/MacroPlaceContext.lua")
+runShared("core/MacroCombatFallback.lua")
 runShared("core/MacroController.lua")
 
 local COMBAT_MODULES = {
