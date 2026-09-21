@@ -1509,8 +1509,25 @@ end
 -- ------------------------------------------------------------
 
 local function vectorFromEvent(event)
-    if not event
-        or type(event.p) ~= "table"
+    if not event then
+        return nil
+    end
+
+    if Context
+        and event.context
+        and type(Context.Resolve) == "function"
+    then
+        local resolved =
+            Context.Resolve(
+                event.context
+            )
+
+        if resolved then
+            return resolved
+        end
+    end
+
+    if type(event.p) ~= "table"
         or #event.p < 3
     then
         return nil
@@ -1926,9 +1943,29 @@ end
 -- ------------------------------------------------------------
 
 local function straightEnoughForLookahead(events, fromIndex, toIndex)
-    local a = vectorFromEvent(events[fromIndex])
+    local fromEvent = events[fromIndex]
+    local toEvent = events[toIndex]
+
+    local fromRoom =
+        fromEvent
+        and fromEvent.context
+        and fromEvent.context.room
+
+    local toRoom =
+        toEvent
+        and toEvent.context
+        and toEvent.context.room
+
+    if fromRoom
+        and toRoom
+        and fromRoom ~= toRoom
+    then
+        return false
+    end
+
+    local a = vectorFromEvent(fromEvent)
     local b = vectorFromEvent(events[fromIndex + 1])
-    local c = vectorFromEvent(events[toIndex])
+    local c = vectorFromEvent(toEvent)
 
     if not a or not b or not c then
         return false
@@ -1972,6 +2009,22 @@ local function playBlocking(macro, token, loopIndex)
         or #macro.Events == 0
     then
         return false, "Macro has no events"
+    end
+
+    if Context
+        and type(Context.Validate) == "function"
+    then
+        local valid, reason =
+            Context.Validate(
+                macro.Environment
+            )
+
+        if not valid then
+            return
+                false,
+                "environment_mismatch:"
+                .. tostring(reason)
+        end
     end
 
     state.Playing = true
@@ -2063,6 +2116,99 @@ local function playBlocking(macro, token, loopIndex)
             replaySkill(event)
             index += 1
 
+        elseif event.type == "checkpoint" then
+            local pending = {}
+
+            if Combat
+                and type(Combat.Pending) == "function"
+            then
+                pending =
+                    Combat.Pending(
+                        event
+                    )
+            end
+
+            if #pending > 0 then
+                stopHumanoid()
+
+                local room =
+                    tostring(
+                        event.room
+                        or "recorded encounter"
+                    )
+
+                state.LastFallback =
+                    "Active • "
+                    .. room
+                    .. " • "
+                    .. tostring(#pending)
+                    .. " enemies"
+
+                setStatus(
+                    "Combat recovery • "
+                    .. room
+                )
+
+                actionLog(
+                    "PLAY",
+                    "FALLBACK_START",
+                    {
+                        room = room,
+                        pending = #pending,
+                    }
+                )
+
+                local ok, err =
+                    Combat.FightUntilClear(
+                        event,
+                        {
+                            Cancelled = function()
+                                return
+                                    not state.Alive
+                                    or token
+                                        ~= state.PlayToken
+                            end,
+                        }
+                    )
+
+                if not ok then
+                    state.Playing = false
+                    state.LastFallback =
+                        "Failed • "
+                        .. tostring(err)
+
+                    return
+                        false,
+                        tostring(err)
+                end
+
+                state.LastFallback =
+                    "Cleared • " .. room
+
+                state.LastAction =
+                    "Fallback clear • "
+                    .. room
+
+                actionLog(
+                    "PLAY",
+                    "FALLBACK_CLEAR",
+                    {
+                        room = room,
+                    }
+                )
+
+                setStatus(
+                    state.Auto
+                    and (
+                        "Auto Macro • Loop "
+                        .. tostring(loopIndex or 1)
+                    )
+                    or "Playing Macro"
+                )
+            end
+
+            index += 1
+
         else
             index += 1
         end
@@ -2125,8 +2271,8 @@ function MacroController.Create(name)
     end
 
     local macro = {
-        Schema = 4,
-        Mode = "RouteCombatSemantic",
+        Schema = 5,
+        Mode = "ContextRouteCombatRecovery",
 
         Name = valid,
         CreatedAt = os.time(),
@@ -2135,6 +2281,10 @@ function MacroController.Create(name)
 
         UniverseId = game.GameId,
         CreatedPlaceId = game.PlaceId,
+        Environment =
+            Context
+            and Context.Environment()
+            or nil,
 
         Events = {},
     }
