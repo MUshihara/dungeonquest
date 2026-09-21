@@ -403,7 +403,7 @@ local function castSkill(slot, target)
     local tool = abilityTool(slot)
 
     if not tool then
-        return false
+        return false, "tool_missing"
     end
 
     local cooldown =
@@ -413,13 +413,19 @@ local function castSkill(slot, target)
         and tonumber(cooldown.Value)
         and cooldown.Value > 0
     then
-        return false
+        return
+            false,
+            "cooldown:"
+            .. string.format(
+                "%.2f",
+                cooldown.Value
+            )
     end
 
     local _, _, root = character(0)
 
     if not root then
-        return false
+        return false, "character_missing"
     end
 
     local distance =
@@ -429,22 +435,37 @@ local function castSkill(slot, target)
             target.Root.Position.Z - root.Position.Z
         ).Magnitude
 
-    if distance > abilityRange(tool) then
-        return false
+    local range =
+        abilityRange(tool)
+
+    if distance > range then
+        return
+            false,
+            "out_of_range:"
+            .. string.format(
+                "%.1f/%.1f",
+                distance,
+                range
+            )
     end
 
     local localEvent =
         tool:FindFirstChild("localEvent")
 
     if not localEvent then
-        return false
+        return false, "localEvent_missing"
     end
 
     face(root, target)
 
-    pcall(function()
-        localEvent:Fire()
-    end)
+    local localOk =
+        pcall(function()
+            localEvent:Fire()
+        end)
+
+    if not localOk then
+        return false, "localEvent_failed"
+    end
 
     local remotes =
         ReplicatedStorage:FindFirstChild("remotes")
@@ -464,7 +485,7 @@ local function castSkill(slot, target)
         end)
     end
 
-    return true
+    return true, tool.Name
 end
 
 local function weaponEvent()
@@ -496,7 +517,7 @@ local function basicAttack(target)
     local _, _, root = character(0)
 
     if not root then
-        return false
+        return false, "character_missing"
     end
 
     local distance =
@@ -507,20 +528,32 @@ local function basicAttack(target)
         ).Magnitude
 
     if distance > BASIC_RANGE then
-        return false
+        return
+            false,
+            "out_of_range:"
+            .. string.format(
+                "%.1f/%.1f",
+                distance,
+                BASIC_RANGE
+            )
     end
 
     local event = weaponEvent()
 
     if not event then
-        return false
+        return false, "weapon_remote_missing"
     end
 
     face(root, target)
 
-    pcall(function()
-        event:FireServer()
-    end)
+    local attackOk =
+        pcall(function()
+            event:FireServer()
+        end)
+
+    if not attackOk then
+        return false, "weapon_remote_failed"
+    end
 
     local remotes =
         ReplicatedStorage:FindFirstChild("remotes")
@@ -537,7 +570,7 @@ local function basicAttack(target)
         end)
     end
 
-    return true
+    return true, "fired"
 end
 
 local function score(enemy, origin, sticky)
@@ -826,6 +859,10 @@ function Combat.FightUntilClear(checkpoint, control)
     local lastAbility = -math.huge
     local lastMove = -math.huge
     local lastState = -math.huge
+
+    local lastAttackReason = "none"
+    local lastQReason = "none"
+    local lastEReason = "none"
 
     local orbitSign = 1
     local nextOrbitFlip =
@@ -1233,11 +1270,25 @@ function Combat.FightUntilClear(checkpoint, control)
         if os.clock() - lastAbility
             >= ABILITY_CHAIN_GAP
         then
-            if castSkill(
-                "e",
-                sticky
-            ) then
-                lastAbility = os.clock()
+            lastAbility = os.clock()
+
+            local eOk, eReason =
+                castSkill(
+                    "e",
+                    sticky
+                )
+
+            lastEReason =
+                tostring(
+                    eReason
+                    or (
+                        eOk
+                        and "fired"
+                        or "unknown"
+                    )
+                )
+
+            if eOk then
                 skillsE += 1
 
                 logger.Log(
@@ -1250,38 +1301,66 @@ function Combat.FightUntilClear(checkpoint, control)
                             math.floor(
                                 distance * 10
                             ) / 10,
+                        result = lastEReason,
                     }
                 )
+            else
+                local qOk, qReason =
+                    castSkill(
+                        "q",
+                        sticky
+                    )
 
-            elseif castSkill(
-                "q",
-                sticky
-            ) then
-                lastAbility = os.clock()
-                skillsQ += 1
+                lastQReason =
+                    tostring(
+                        qReason
+                        or (
+                            qOk
+                            and "fired"
+                            or "unknown"
+                        )
+                    )
 
-                logger.Log(
-                    "SKILL",
-                    {
-                        slot = "q",
-                        target =
-                            sticky.Model.Name,
-                        distance =
-                            math.floor(
-                                distance * 10
-                            ) / 10,
-                    }
-                )
+                if qOk then
+                    skillsQ += 1
+
+                    logger.Log(
+                        "SKILL",
+                        {
+                            slot = "q",
+                            target =
+                                sticky.Model.Name,
+                            distance =
+                                math.floor(
+                                    distance * 10
+                                ) / 10,
+                            result = lastQReason,
+                        }
+                    )
+                end
             end
         end
 
         if os.clock() - lastAttack
             >= ATTACK_INTERVAL
         then
-            if basicAttack(sticky) then
-                lastAttack =
-                    os.clock()
+            lastAttack =
+                os.clock()
 
+            local attackOk, attackReason =
+                basicAttack(sticky)
+
+            lastAttackReason =
+                tostring(
+                    attackReason
+                    or (
+                        attackOk
+                        and "fired"
+                        or "unknown"
+                    )
+                )
+
+            if attackOk then
                 attacks += 1
 
                 logger.Log(
@@ -1293,6 +1372,8 @@ function Combat.FightUntilClear(checkpoint, control)
                             math.floor(
                                 distance * 10
                             ) / 10,
+                        result =
+                            lastAttackReason,
                     }
                 )
             end
@@ -1345,6 +1426,12 @@ function Combat.FightUntilClear(checkpoint, control)
                         eCooldown,
                     e_name =
                         eName,
+                    attack_state =
+                        lastAttackReason,
+                    q_state =
+                        lastQReason,
+                    e_state =
+                        lastEReason,
                     shift_lock =
                         humanoid.AutoRotate == false,
                 }
@@ -1375,6 +1462,12 @@ function Combat.FightUntilClear(checkpoint, control)
                 .. tostring(qCooldown)
                 .. " | e_cd="
                 .. tostring(eCooldown)
+                .. " | atk="
+                .. tostring(lastAttackReason)
+                .. " | q="
+                .. tostring(lastQReason)
+                .. " | e="
+                .. tostring(lastEReason)
                 .. " | lock="
                 .. tostring(
                     humanoid.AutoRotate == false
