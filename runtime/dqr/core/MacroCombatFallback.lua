@@ -9,7 +9,7 @@ local Context = DQR_MACRO_CONTEXT
 
 local Combat = {}
 
-local SCAN_CACHE = 0.12
+local SCAN_CACHE = 0.18
 local CHECKPOINT_RADIUS = 150.0
 local FALLBACK_TIMEOUT = 120.0
 
@@ -256,7 +256,7 @@ function Combat.Pending(checkpoint)
     local result = {}
 
     for _, enemy in ipairs(
-        Combat.Scan(true)
+        Combat.Scan(false)
     ) do
         local sameRoom =
             room ~= nil
