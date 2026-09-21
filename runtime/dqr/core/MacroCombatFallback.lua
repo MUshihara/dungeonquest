@@ -3,6 +3,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 local Context = DQR_MACRO_CONTEXT
@@ -22,6 +23,16 @@ local ORBIT_STEP = 9.0
 local ATTACK_INTERVAL = 0.34
 local ABILITY_CHAIN_GAP = 0.20
 local MOVEMENT_INTERVAL = 0.09
+local MATCH_STATE_INTERVAL = 0.50
+
+local LOG_ROOT = "SerenityDQR"
+local LOG_DIR = LOG_ROOT .. "/logs"
+
+local canWrite = type(writefile) == "function"
+local canFolder = type(makefolder) == "function"
+local canIsFolder = type(isfolder) == "function"
+
+local matchCounter = 0
 
 local scanCache = {
     At = -math.huge,
@@ -641,48 +652,427 @@ local function combatMove(humanoid, root, target, orbitSign)
     end)
 end
 
+local function movementMode(root, target)
+    local delta =
+        target.Root.Position
+        - root.Position
+
+    local distance =
+        Vector3.new(
+            delta.X,
+            0,
+            delta.Z
+        ).Magnitude
+
+    if distance > APPROACH_RANGE then
+        return "APPROACH", distance
+    elseif distance < RETREAT_RANGE then
+        return "RETREAT", distance
+    end
+
+    return "ORBIT", distance
+end
+
+local function cooldownValue(slot)
+    local tool = abilityTool(slot)
+
+    if not tool then
+        return nil, "missing"
+    end
+
+    local cooldown =
+        tool:FindFirstChild("cooldown")
+
+    if not cooldown then
+        return 0, tool.Name
+    end
+
+    return
+        tonumber(cooldown.Value) or 0,
+        tool.Name
+end
+
+local function ensureLogFolder()
+    if not canWrite or not canFolder then
+        return
+    end
+
+    pcall(function()
+        if not canIsFolder or not isfolder(LOG_ROOT) then
+            makefolder(LOG_ROOT)
+        end
+    end)
+
+    pcall(function()
+        if not canIsFolder or not isfolder(LOG_DIR) then
+            makefolder(LOG_DIR)
+        end
+    end)
+end
+
+local function newMatchLogger(checkpoint)
+    matchCounter += 1
+
+    local matchId =
+        tostring(os.time())
+        .. "_"
+        .. tostring(matchCounter)
+
+    local path =
+        LOG_DIR
+        .. "/macro_match_"
+        .. matchId
+        .. ".jsonl"
+
+    local lines = {}
+    local started = os.clock()
+
+    local function log(kind, fields)
+        fields = fields or {}
+
+        local payload = {
+            match = matchId,
+            kind = tostring(kind),
+            elapsed =
+                math.floor(
+                    (os.clock() - started)
+                    * 1000
+                ) / 1000,
+            room =
+                checkpoint
+                and checkpoint.room
+                or nil,
+        }
+
+        for key, value in pairs(fields) do
+            payload[key] = value
+        end
+
+        local ok, encoded =
+            pcall(
+                HttpService.JSONEncode,
+                HttpService,
+                payload
+            )
+
+        if ok then
+            lines[#lines + 1] = encoded
+        end
+    end
+
+    local function save()
+        if not canWrite then
+            return nil
+        end
+
+        ensureLogFolder()
+
+        local ok =
+            pcall(
+                writefile,
+                path,
+                table.concat(
+                    lines,
+                    "\n"
+                )
+            )
+
+        return ok and path or nil
+    end
+
+    return {
+        Id = matchId,
+        Path = path,
+        Started = started,
+        Lines = lines,
+        Log = log,
+        Save = save,
+    }
+end
+
+local function compactEnemyList(enemies)
+    local result = {}
+
+    for _, enemy in ipairs(enemies or {}) do
+        result[#result + 1] = {
+            name = enemy.Model.Name,
+            hp =
+                math.floor(
+                    enemy.Humanoid.Health
+                ),
+            max =
+                math.floor(
+                    enemy.Humanoid.MaxHealth
+                ),
+            room = enemy.Room,
+        }
+    end
+
+    return result
+end
+
 function Combat.FightUntilClear(checkpoint, control)
     control = control or {}
 
+    local logger =
+        newMatchLogger(
+            checkpoint
+        )
+
     local started = os.clock()
     local sticky
+
     local lastAttack = -math.huge
     local lastAbility = -math.huge
     local lastMove = -math.huge
-    local orbitSign = 1
-    local nextOrbitFlip = os.clock() + 1.6
+    local lastState = -math.huge
 
-    print(
-        "[DQR Macro] FALLBACK | START | room="
-        .. tostring(checkpoint and checkpoint.room or "unknown")
+    local orbitSign = 1
+    local nextOrbitFlip =
+        os.clock() + 1.6
+
+    local lockedHumanoid
+    local previousAutoRotate
+
+    local lastTarget
+    local lastTargetHealth
+    local lastPlayerHealth
+
+    local attacks = 0
+    local skillsQ = 0
+    local skillsE = 0
+    local kills = 0
+    local damageDealt = 0
+    local damageTaken = 0
+    local maxPending = 0
+
+    local initialPending =
+        Combat.Pending(
+            checkpoint
+        )
+
+    maxPending = #initialPending
+
+    local function restoreFacing()
+        if lockedHumanoid
+            and lockedHumanoid.Parent
+            and previousAutoRotate ~= nil
+        then
+            pcall(function()
+                lockedHumanoid.AutoRotate =
+                    previousAutoRotate
+            end)
+        end
+
+        lockedHumanoid = nil
+        previousAutoRotate = nil
+    end
+
+    local function lockFacing(humanoid, root, target)
+        if lockedHumanoid ~= humanoid then
+            restoreFacing()
+
+            lockedHumanoid = humanoid
+            previousAutoRotate =
+                humanoid.AutoRotate
+        end
+
+        pcall(function()
+            humanoid.AutoRotate = false
+        end)
+
+        face(
+            root,
+            target
+        )
+    end
+
+    local function finish(ok, reason, pending)
+        restoreFacing()
+
+        local elapsed =
+            os.clock() - started
+
+        logger.Log(
+            "MATCH_END",
+            {
+                ok = ok == true,
+                reason = tostring(reason),
+                seconds =
+                    math.floor(
+                        elapsed * 1000
+                    ) / 1000,
+                attacks = attacks,
+                skills_q = skillsQ,
+                skills_e = skillsE,
+                kills = kills,
+                damage_dealt =
+                    math.floor(damageDealt),
+                damage_taken =
+                    math.floor(damageTaken),
+                max_pending = maxPending,
+                remaining =
+                    compactEnemyList(
+                        pending or {}
+                    ),
+            }
+        )
+
+        local path =
+            logger.Save()
+
+        if type(control.MatchLog) == "function" then
+            pcall(
+                control.MatchLog,
+                path
+                or (
+                    "console:"
+                    .. logger.Id
+                )
+            )
+        end
+
+        print(
+            "[DQR Macro Match "
+            .. logger.Id
+            .. "] END"
+            .. " | result="
+            .. tostring(reason)
+            .. " | seconds="
+            .. string.format("%.2f", elapsed)
+            .. " | kills="
+            .. tostring(kills)
+            .. " | attacks="
+            .. tostring(attacks)
+            .. " | q="
+            .. tostring(skillsQ)
+            .. " | e="
+            .. tostring(skillsE)
+            .. " | damage="
+            .. tostring(math.floor(damageDealt))
+            .. " | taken="
+            .. tostring(math.floor(damageTaken))
+            .. (
+                path
+                and (" | log=" .. path)
+                or ""
+            )
+        )
+
+        return ok, reason
+    end
+
+    logger.Log(
+        "MATCH_START",
+        {
+            checkpoint_reason =
+                checkpoint
+                and checkpoint.reason
+                or nil,
+            pending =
+                compactEnemyList(
+                    initialPending
+                ),
+        }
     )
 
-    while os.clock() - started < FALLBACK_TIMEOUT do
+    print(
+        "[DQR Macro Match "
+        .. logger.Id
+        .. "] START"
+        .. " | room="
+        .. tostring(
+            checkpoint
+            and checkpoint.room
+            or "unknown"
+        )
+        .. " | pending="
+        .. tostring(#initialPending)
+    )
+
+    while os.clock() - started
+        < FALLBACK_TIMEOUT
+    do
         if type(control.Cancelled) == "function"
             and control.Cancelled()
         then
-            return false, "cancelled"
+            return
+                finish(
+                    false,
+                    "cancelled",
+                    Combat.Pending(checkpoint)
+                )
         end
 
         local pending =
-            Combat.Pending(checkpoint)
-
-        if #pending == 0 then
-            print(
-                "[DQR Macro] FALLBACK | CLEAR | seconds="
-                .. string.format("%.2f", os.clock() - started)
+            Combat.Pending(
+                checkpoint
             )
 
-            return true
+        if #pending > maxPending then
+            maxPending = #pending
+        end
+
+        if #pending == 0 then
+            return
+                finish(
+                    true,
+                    "clear",
+                    pending
+                )
         end
 
         local _, humanoid, root =
             character(2)
 
         if not humanoid or not root then
+            logger.Log(
+                "NO_CHARACTER",
+                {}
+            )
+
             task.wait(0.10)
             continue
         end
+
+        if lastPlayerHealth == nil then
+            lastPlayerHealth =
+                humanoid.Health
+        elseif humanoid.Health
+            < lastPlayerHealth
+        then
+            local lost =
+                lastPlayerHealth
+                - humanoid.Health
+
+            damageTaken +=
+                math.max(lost, 0)
+
+            logger.Log(
+                "PLAYER_DAMAGE",
+                {
+                    amount =
+                        math.floor(lost),
+                    hp =
+                        math.floor(
+                            humanoid.Health
+                        ),
+                    max =
+                        math.floor(
+                            humanoid.MaxHealth
+                        ),
+                }
+            )
+
+            lastPlayerHealth =
+                humanoid.Health
+        else
+            lastPlayerHealth =
+                humanoid.Health
+        end
+
+        local previousTarget =
+            sticky
 
         sticky =
             chooseTarget(
@@ -691,17 +1081,145 @@ function Combat.FightUntilClear(checkpoint, control)
                 sticky
             )
 
+        if previousTarget
+            and (
+                previousTarget ~= sticky
+                or not previousTarget.Humanoid
+                or previousTarget.Humanoid.Health <= 0
+            )
+        then
+            if previousTarget.Humanoid
+                and previousTarget.Humanoid.Health <= 0
+            then
+                kills += 1
+
+                logger.Log(
+                    "TARGET_DEAD",
+                    {
+                        name =
+                            previousTarget.Model.Name,
+                    }
+                )
+            end
+        end
+
         if not sticky then
+            logger.Log(
+                "NO_TARGET",
+                {
+                    pending = #pending,
+                }
+            )
+
             task.wait(0.08)
             continue
         end
 
-        if os.clock() >= nextOrbitFlip then
-            orbitSign *= -1
-            nextOrbitFlip = os.clock() + 1.6
+        if sticky ~= lastTarget then
+            lastTarget = sticky
+            lastTargetHealth =
+                sticky.Humanoid.Health
+
+            local mode, distance =
+                movementMode(
+                    root,
+                    sticky
+                )
+
+            logger.Log(
+                "TARGET_LOCK",
+                {
+                    name = sticky.Model.Name,
+                    hp =
+                        math.floor(
+                            sticky.Humanoid.Health
+                        ),
+                    max =
+                        math.floor(
+                            sticky.Humanoid.MaxHealth
+                        ),
+                    distance =
+                        math.floor(
+                            distance * 10
+                        ) / 10,
+                    mode = mode,
+                    pending = #pending,
+                }
+            )
+
+            print(
+                "[DQR Macro Match "
+                .. logger.Id
+                .. "] TARGET"
+                .. " | name="
+                .. sticky.Model.Name
+                .. " | hp="
+                .. tostring(
+                    math.floor(
+                        sticky.Humanoid.Health
+                    )
+                )
+                .. "/"
+                .. tostring(
+                    math.floor(
+                        sticky.Humanoid.MaxHealth
+                    )
+                )
+                .. " | pending="
+                .. tostring(#pending)
+            )
+        elseif lastTargetHealth
+            and sticky.Humanoid.Health
+                < lastTargetHealth
+        then
+            local dealt =
+                lastTargetHealth
+                - sticky.Humanoid.Health
+
+            damageDealt +=
+                math.max(dealt, 0)
+
+            logger.Log(
+                "TARGET_DAMAGE",
+                {
+                    name = sticky.Model.Name,
+                    amount =
+                        math.floor(dealt),
+                    hp =
+                        math.floor(
+                            sticky.Humanoid.Health
+                        ),
+                }
+            )
+
+            lastTargetHealth =
+                sticky.Humanoid.Health
+        else
+            lastTargetHealth =
+                sticky.Humanoid.Health
         end
 
-        if os.clock() - lastMove >= MOVEMENT_INTERVAL then
+        if os.clock() >= nextOrbitFlip then
+            orbitSign *= -1
+            nextOrbitFlip =
+                os.clock() + 1.6
+        end
+
+        lockFacing(
+            humanoid,
+            root,
+            sticky
+        )
+
+        local mode, distance =
+            movementMode(
+                root,
+                sticky
+            )
+
+        if os.clock() - lastMove
+            >= MOVEMENT_INTERVAL
+        then
             lastMove = os.clock()
 
             combatMove(
@@ -712,29 +1230,167 @@ function Combat.FightUntilClear(checkpoint, control)
             )
         end
 
-        if os.clock() - lastAbility >= ABILITY_CHAIN_GAP then
-            if castSkill("e", sticky)
-                or castSkill("q", sticky)
-            then
+        if os.clock() - lastAbility
+            >= ABILITY_CHAIN_GAP
+        then
+            if castSkill(
+                "e",
+                sticky
+            ) then
                 lastAbility = os.clock()
+                skillsE += 1
+
+                logger.Log(
+                    "SKILL",
+                    {
+                        slot = "e",
+                        target =
+                            sticky.Model.Name,
+                        distance =
+                            math.floor(
+                                distance * 10
+                            ) / 10,
+                    }
+                )
+
+            elseif castSkill(
+                "q",
+                sticky
+            ) then
+                lastAbility = os.clock()
+                skillsQ += 1
+
+                logger.Log(
+                    "SKILL",
+                    {
+                        slot = "q",
+                        target =
+                            sticky.Model.Name,
+                        distance =
+                            math.floor(
+                                distance * 10
+                            ) / 10,
+                    }
+                )
             end
         end
 
-        if os.clock() - lastAttack >= ATTACK_INTERVAL then
+        if os.clock() - lastAttack
+            >= ATTACK_INTERVAL
+        then
             if basicAttack(sticky) then
-                lastAttack = os.clock()
+                lastAttack =
+                    os.clock()
+
+                attacks += 1
+
+                logger.Log(
+                    "ATTACK",
+                    {
+                        target =
+                            sticky.Model.Name,
+                        distance =
+                            math.floor(
+                                distance * 10
+                            ) / 10,
+                    }
+                )
             end
+        end
+
+        if os.clock() - lastState
+            >= MATCH_STATE_INTERVAL
+        then
+            lastState =
+                os.clock()
+
+            local qCooldown, qName =
+                cooldownValue("q")
+
+            local eCooldown, eName =
+                cooldownValue("e")
+
+            logger.Log(
+                "STATE",
+                {
+                    target =
+                        sticky.Model.Name,
+                    target_hp =
+                        math.floor(
+                            sticky.Humanoid.Health
+                        ),
+                    target_max =
+                        math.floor(
+                            sticky.Humanoid.MaxHealth
+                        ),
+                    player_hp =
+                        math.floor(
+                            humanoid.Health
+                        ),
+                    player_max =
+                        math.floor(
+                            humanoid.MaxHealth
+                        ),
+                    distance =
+                        math.floor(
+                            distance * 10
+                        ) / 10,
+                    mode = mode,
+                    pending = #pending,
+                    q_cd =
+                        qCooldown,
+                    q_name =
+                        qName,
+                    e_cd =
+                        eCooldown,
+                    e_name =
+                        eName,
+                    shift_lock =
+                        humanoid.AutoRotate == false,
+                }
+            )
+
+            print(
+                "[DQR Macro Match "
+                .. logger.Id
+                .. "] STATE"
+                .. " | target="
+                .. sticky.Model.Name
+                .. " | hp="
+                .. tostring(
+                    math.floor(
+                        sticky.Humanoid.Health
+                    )
+                )
+                .. " | dist="
+                .. string.format(
+                    "%.1f",
+                    distance
+                )
+                .. " | mode="
+                .. mode
+                .. " | pending="
+                .. tostring(#pending)
+                .. " | q_cd="
+                .. tostring(qCooldown)
+                .. " | e_cd="
+                .. tostring(eCooldown)
+                .. " | lock="
+                .. tostring(
+                    humanoid.AutoRotate == false
+                )
+            )
         end
 
         task.wait(0.04)
     end
 
-    print(
-        "[DQR Macro] FALLBACK | TIMEOUT | room="
-        .. tostring(checkpoint and checkpoint.room or "unknown")
-    )
-
-    return false, "fallback_timeout"
+    return
+        finish(
+            false,
+            "fallback_timeout",
+            Combat.Pending(checkpoint)
+        )
 end
 
 DQR_MACRO_COMBAT = Combat
