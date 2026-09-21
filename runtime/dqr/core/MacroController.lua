@@ -414,10 +414,23 @@ local function startOrientationLock(look)
                 return
             end
 
-            local _, humanoid, root =
-                liveCharacter(0)
+            local character =
+                LP.Character
+
+            local humanoid =
+                character
+                and character:FindFirstChildOfClass(
+                    "Humanoid"
+                )
+
+            local root =
+                character
+                and character:FindFirstChild(
+                    "HumanoidRootPart"
+                )
 
             if not humanoid
+                or humanoid.Health <= 0
                 or not root
                 or not state.OrientationDirection
             then
@@ -534,7 +547,9 @@ local function sanitizeMacro(macro, fallbackName)
                     and event.look
                     or nil,
                 shiftLocked =
-                    event.shiftLocked == true,
+                    event.shiftLocked == nil
+                    and nil
+                    or event.shiftLocked == true,
             }
 
         elseif type(event) == "table"
@@ -2430,11 +2445,6 @@ local function playBlocking(macro, token, loopIndex)
             events[index]
 
         if event.type == "move" then
-            applyRecordedOrientation(
-                event,
-                macro
-            )
-
             local targetIndex =
                 index
 
@@ -2463,9 +2473,17 @@ local function playBlocking(macro, token, loopIndex)
                     candidateIndex
             end
 
+            local targetEvent =
+                events[targetIndex]
+
+            applyRecordedOrientation(
+                targetEvent,
+                macro
+            )
+
             local target =
                 vectorFromEvent(
-                    events[targetIndex]
+                    targetEvent
                 )
 
             if target then
