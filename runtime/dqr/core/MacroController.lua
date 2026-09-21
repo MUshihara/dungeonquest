@@ -799,6 +799,10 @@ local function recordMove(macro, force)
                 position.Y,
                 position.Z,
             },
+            context =
+                Context
+                and Context.Capture(position)
+                or nil,
         }
     )
 
@@ -812,6 +816,203 @@ local function recordMove(macro, force)
         os.clock()
 
     return true
+end
+
+local function mergeEncounterEnemies(target, source)
+    local byName = {}
+
+    for _, entry in ipairs(target.enemies or {}) do
+        byName[tostring(entry.name)] = entry
+    end
+
+    for _, entry in ipairs(source.enemies or {}) do
+        local name = tostring(entry.name)
+        local existing = byName[name]
+
+        if existing then
+            existing.count =
+                math.max(
+                    tonumber(existing.count) or 0,
+                    tonumber(entry.count) or 0
+                )
+        else
+            local copy = {
+                name = name,
+                count = tonumber(entry.count) or 1,
+            }
+
+            target.enemies[#target.enemies + 1] = copy
+            byName[name] = copy
+        end
+    end
+end
+
+local function finalizeEncounter(macro, reason)
+    local encounter = state.ActiveEncounter
+
+    if not encounter then
+        return false
+    end
+
+    recordMove(
+        macro,
+        true
+    )
+
+    addEvent(
+        macro,
+        {
+            type = "checkpoint",
+            room = encounter.room,
+            context = encounter.context,
+            enemies = encounter.enemies or {},
+            radius = encounter.radius or 150,
+            reason = tostring(reason or "recorded_clear"),
+        }
+    )
+
+    actionLog(
+        "REC",
+        "CHECKPOINT",
+        {
+            room = encounter.room or "unknown",
+            reason = reason or "recorded_clear",
+            enemies = #(encounter.enemies or {}),
+        }
+    )
+
+    state.ActiveEncounter = nil
+
+    return true
+end
+
+local function beginEncounter(macro)
+    if not Combat
+        or type(Combat.Snapshot) ~= "function"
+    then
+        return
+    end
+
+    local _, _, root =
+        liveCharacter(0)
+
+    if not root then
+        return
+    end
+
+    local snapshot =
+        Combat.Snapshot(
+            root.Position,
+            150
+        )
+
+    if not snapshot
+        or type(snapshot.enemies) ~= "table"
+        or #snapshot.enemies == 0
+    then
+        return
+    end
+
+    local active =
+        state.ActiveEncounter
+
+    if active
+        and active.room == snapshot.room
+    then
+        mergeEncounterEnemies(
+            active,
+            snapshot
+        )
+
+        active.LastLiveAt =
+            os.clock()
+
+        return
+    end
+
+    if active then
+        finalizeEncounter(
+            macro,
+            "encounter_switch"
+        )
+    end
+
+    state.ActiveEncounter = {
+        room = snapshot.room,
+        context = snapshot.context,
+        enemies = snapshot.enemies,
+        radius = snapshot.radius or 150,
+        StartedAt = os.clock(),
+        LastLiveAt = os.clock(),
+    }
+
+    actionLog(
+        "REC",
+        "ENCOUNTER_START",
+        {
+            room = snapshot.room or "unknown",
+            enemies = #snapshot.enemies,
+        }
+    )
+end
+
+local function pollEncounter(macro)
+    local encounter =
+        state.ActiveEncounter
+
+    if not encounter
+        or not Combat
+        or type(Combat.Pending) ~= "function"
+    then
+        return
+    end
+
+    local _, _, root =
+        liveCharacter(0)
+
+    if root
+        and encounter.room
+        and Context
+        and type(Context.RoomAt) == "function"
+    then
+        local currentRoom =
+            Context.RoomAt(
+                root.Position
+            )
+
+        if currentRoom
+            and currentRoom ~= encounter.room
+        then
+            finalizeEncounter(
+                macro,
+                "room_exit"
+            )
+
+            return
+        end
+    end
+
+    local pending =
+        Combat.Pending(
+            encounter
+        )
+
+    if #pending > 0 then
+        encounter.LastLiveAt =
+            os.clock()
+
+        return
+    end
+
+    if os.clock()
+        - (encounter.LastLiveAt or os.clock())
+        >= ENCOUNTER_CLEAR_GRACE
+    then
+        finalizeEncounter(
+            macro,
+            "recorded_clear"
+        )
+    end
 end
 
 -- ------------------------------------------------------------
@@ -863,6 +1064,8 @@ local function recordSkill(macro, slot, tool)
         macro,
         true
     )
+
+    beginEncounter(macro)
 
     local event = {
         type = "skill",
@@ -1075,6 +1278,8 @@ local function recordAttackFromAnimation(
                 true
             )
 
+            beginEncounter(macro)
+
             local event = {
                 type = "attack",
                 animation = animationId,
@@ -1222,6 +1427,18 @@ local function attachRecordListeners(macro)
                     macro,
                     false
                 )
+            end
+
+            state.EncounterAccumulator += dt
+
+            if state.EncounterAccumulator
+                >= ENCOUNTER_CHECK_INTERVAL
+            then
+                state.EncounterAccumulator =
+                    state.EncounterAccumulator
+                    % ENCOUNTER_CHECK_INTERVAL
+
+                pollEncounter(macro)
             end
         end
     )
