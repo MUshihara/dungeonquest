@@ -16,7 +16,10 @@ local HttpService = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
-local MACRO_KEY = "__SERENITY_DQR_MACRO_V4"
+local MACRO_KEY = "__SERENITY_DQR_MACRO_V5"
+
+local Context = DQR_MACRO_CONTEXT
+local Combat = DQR_MACRO_COMBAT
 
 local ROOT_DIR = "SerenityDQR"
 local MACRO_DIR = ROOT_DIR .. "/macros"
@@ -27,11 +30,13 @@ local INDEX_PATH = MACRO_DIR .. "/index.json"
 -- ------------------------------------------------------------
 -- Heartbeat only checks position at this interval. It writes nothing unless
 -- distance, vertical movement, or a meaningful turn warrants a new waypoint.
-local SAMPLE_CHECK_INTERVAL = 0.065
-local SAMPLE_MIN_DISTANCE = 2.20
-local SAMPLE_CORNER_MIN_DISTANCE = 0.70
-local SAMPLE_CORNER_DOT = 0.90
-local SAMPLE_VERTICAL_TRIGGER = 0.65
+local SAMPLE_CHECK_INTERVAL = 0.030
+local SAMPLE_MIN_DISTANCE = 0.55
+local SAMPLE_CORNER_MIN_DISTANCE = 0.22
+local SAMPLE_CORNER_DOT = 0.965
+local SAMPLE_VERTICAL_TRIGGER = 0.28
+local ENCOUNTER_CHECK_INTERVAL = 0.16
+local ENCOUNTER_CLEAR_GRACE = 0.42
 
 -- An action always forces one exact movement sample immediately beforehand.
 local ACTION_DEDUPE_WINDOW = 0.10
@@ -40,9 +45,9 @@ local SKILL_ANIMATION_DEDUPE_WINDOW = 0.18
 -- ------------------------------------------------------------
 -- Playback
 -- ------------------------------------------------------------
-local WAYPOINT_REACH_RADIUS = 3.0
-local WAYPOINT_VERTICAL_RADIUS = 5.0
-local ROUTE_LOOKAHEAD_POINTS = 2
+local WAYPOINT_REACH_RADIUS = 1.05
+local WAYPOINT_VERTICAL_RADIUS = 1.75
+local ROUTE_LOOKAHEAD_POINTS = 7
 local STUCK_CHECK_INTERVAL = 0.12
 local STUCK_WINDOW = 0.70
 local STUCK_PROGRESS_EPSILON = 0.45
@@ -89,6 +94,10 @@ local state = {
 
     WatchedAbilityTools = {},
 
+    ActiveEncounter = nil,
+    EncounterAccumulator = 0,
+    LastFallback = "None",
+
     PlayToken = 0,
 
     FarmBridge = nil,
@@ -99,6 +108,7 @@ local listeners = {}
 
 local old =
     ENV[MACRO_KEY]
+    or ENV.__SERENITY_DQR_MACRO_V4
     or ENV.__SERENITY_DQR_MACRO_V3
     or ENV.__SERENITY_DQR_MACRO_V2
     or ENV.__SERENITY_DQR_MACRO_V1
