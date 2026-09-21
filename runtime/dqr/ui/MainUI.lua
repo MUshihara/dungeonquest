@@ -453,6 +453,18 @@ local function buildManifest()
                                 Value = "0",
                             },
                             {
+                                Id = "RecordingBuffer",
+                                Type = "Live",
+                                Title = "Live Recording Buffer",
+                                Value = "0",
+                            },
+                            {
+                                Id = "RecordingMacro",
+                                Type = "Live",
+                                Title = "Recording Macro",
+                                Value = "None",
+                            },
+                            {
                                 Id = "Moves",
                                 Type = "Live",
                                 Title = "Move Points",
@@ -591,6 +603,22 @@ function UI:UpdateLive()
     adapter:SetLive(
         "Macro.Status.Events",
         tostring(status.Events or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.RecordingBuffer",
+        tostring(
+            status.RecordingOwnedEvents
+            or 0
+        )
+    )
+
+    adapter:SetLive(
+        "Macro.Status.RecordingMacro",
+        tostring(
+            status.RecordingName
+            or "None"
+        )
     )
 
     adapter:SetLive(
