@@ -90,6 +90,7 @@ local state = {
     PreviousSamplePosition = nil,
     LastSampleAt = -math.huge,
     LastRecordedRoom = nil,
+    PendingRoomEncounterProbe = false,
 
     LastSkillRecordedAt = -math.huge,
     LastAttackRecordedAt = -math.huge,
@@ -811,6 +812,9 @@ local function recordMove(macro, force)
     then
         state.LastRecordedRoom = room
 
+        state.PendingRoomEncounterProbe =
+            true
+
         actionLog(
             "REC",
             "ROOM",
@@ -1460,6 +1464,15 @@ local function attachRecordListeners(macro)
                     macro,
                     false
                 )
+
+                if state.PendingRoomEncounterProbe then
+                    state.PendingRoomEncounterProbe =
+                        false
+
+                    beginEncounter(
+                        macro
+                    )
+                end
             end
 
             state.EncounterAccumulator += dt
@@ -2640,6 +2653,7 @@ function MacroController.StartRecording(name)
     state.PreviousSamplePosition = nil
     state.LastSampleAt = -math.huge
     state.LastRecordedRoom = nil
+    state.PendingRoomEncounterProbe = false
 
     state.LastSkillRecordedAt =
         -math.huge
@@ -2719,6 +2733,7 @@ function MacroController.StopRecording(save)
     state.PreviousSamplePosition = nil
     state.ActiveEncounter = nil
     state.EncounterAccumulator = 0
+    state.PendingRoomEncounterProbe = false
 
     local ok, err = true, nil
 
