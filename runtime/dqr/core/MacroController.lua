@@ -84,6 +84,10 @@ local state = {
     LastAction = "None",
 
     RecordingStartedAt = 0,
+    RecordingMacro = nil,
+    RecordingName = nil,
+    RecordingSessionId = nil,
+    RecordingFirstEventCaptured = false,
     RecordConnections = {},
     RecordAccumulator = 0,
 
@@ -962,10 +966,29 @@ local function recordMove(macro, force)
         return false
     end
 
-    local pointContext =
-        Context
-        and Context.Capture(position)
-        or nil
+    local pointContext
+
+    if Context
+        and type(Context.Capture) == "function"
+    then
+        local ok, captured =
+            pcall(
+                Context.Capture,
+                position
+            )
+
+        if ok then
+            pointContext = captured
+        else
+            actionLog(
+                "REC",
+                "CONTEXT_FALLBACK",
+                {
+                    error = tostring(captured),
+                }
+            )
+        end
+    end
 
     local shiftLocked =
         isShiftLocked()
@@ -988,6 +1011,29 @@ local function recordMove(macro, force)
             shiftLocked = shiftLocked,
         }
     )
+
+    if not state.RecordingFirstEventCaptured then
+        state.RecordingFirstEventCaptured = true
+
+        actionLog(
+            "REC",
+            "FIRST_EVENT",
+            {
+                macro =
+                    macro
+                    and macro.Name
+                    or "unknown",
+                events =
+                    macro
+                    and #macro.Events
+                    or 0,
+                shift_lock =
+                    tostring(
+                        shiftLocked
+                    ),
+            }
+        )
+    end
 
     local room =
         pointContext
@@ -2849,6 +2895,19 @@ function MacroController.StartRecording(name)
 
     state.Selected = macro.Name
 
+    state.RecordingMacro = macro
+    state.RecordingName = macro.Name
+    state.RecordingSessionId =
+        tostring(os.time())
+        .. "-"
+        .. tostring(
+            math.floor(
+                os.clock() * 1000
+            )
+        )
+
+    state.RecordingFirstEventCaptured = false
+
     state.Recording = true
     state.RecordingStartedAt =
         os.clock()
@@ -2880,10 +2939,56 @@ function MacroController.StartRecording(name)
 
     pauseFarm()
 
-    recordMove(
-        macro,
-        true
-    )
+    local firstOk, firstResult =
+        pcall(
+            recordMove,
+            macro,
+            true
+        )
+
+    if not firstOk
+        or firstResult ~= true
+    then
+        local _, _, root =
+            liveCharacter(0)
+
+        if root then
+            local position =
+                root.Position
+
+            addEvent(
+                macro,
+                {
+                    type = "move",
+                    p = {
+                        position.X,
+                        position.Y,
+                        position.Z,
+                    },
+                    context = nil,
+                    look = captureLook(),
+                    shiftLocked =
+                        isShiftLocked(),
+                }
+            )
+
+            state.RecordingFirstEventCaptured =
+                true
+
+            actionLog(
+                "REC",
+                "FIRST_EVENT_FALLBACK",
+                {
+                    events =
+                        #macro.Events,
+                    error =
+                        firstOk
+                        and tostring(firstResult)
+                        or tostring(firstResult),
+                }
+            )
+        end
+    end
 
     attachRecordListeners(
         macro
@@ -2894,7 +2999,15 @@ function MacroController.StartRecording(name)
         "START",
         {
             macro = macro.Name,
+            session =
+                state.RecordingSessionId,
             place = game.PlaceId,
+            events =
+                #macro.Events,
+            shift_lock =
+                tostring(
+                    macro.ShiftLockRecorded
+                ),
         }
     )
 
@@ -2911,10 +3024,19 @@ function MacroController.StopRecording(save)
     end
 
     local macro =
-        state.Selected
-        and state.Macros[
+        state.RecordingMacro
+        or (
+            state.RecordingName
+            and state.Macros[
+                state.RecordingName
+            ]
+        )
+        or (
             state.Selected
-        ]
+            and state.Macros[
+                state.Selected
+            ]
+        )
 
     if macro then
         if state.ActiveEncounter then
@@ -2950,6 +3072,14 @@ function MacroController.StopRecording(save)
     state.EncounterAccumulator = 0
     state.PendingRoomEncounterProbe = false
 
+    if macro and macro.Name then
+        state.Selected =
+            macro.Name
+        state.Macros[
+            macro.Name
+        ] = macro
+    end
+
     local ok, err = true, nil
 
     if save ~= false and macro then
@@ -2979,6 +3109,35 @@ function MacroController.StopRecording(save)
             checkpoints = counts.Checkpoints,
         }
     )
+
+    actionLog(
+        "REC",
+        "SAVE",
+        {
+            macro =
+                macro
+                and macro.Name
+                or "none",
+            session =
+                state.RecordingSessionId
+                or "none",
+            events =
+                macro
+                and #macro.Events
+                or 0,
+            ok =
+                tostring(ok),
+            error =
+                err
+                and tostring(err)
+                or "none",
+        }
+    )
+
+    state.RecordingMacro = nil
+    state.RecordingName = nil
+    state.RecordingSessionId = nil
+    state.RecordingFirstEventCaptured = false
 
     if ok then
         setStatus(
@@ -3014,8 +3173,56 @@ function MacroController.PlayOnce(name)
         return false, "Select a macro"
     end
 
+    if #macro.Events == 0
+        and persistentStorage
+    then
+        local diskMacro =
+            loadMacroFromDisk(name)
+
+        if diskMacro
+            and #diskMacro.Events > 0
+        then
+            macro = diskMacro
+            state.Macros[name] =
+                diskMacro
+
+            actionLog(
+                "PLAY",
+                "RECOVERED_FROM_DISK",
+                {
+                    macro = name,
+                    events =
+                        #diskMacro.Events,
+                }
+            )
+        end
+    end
+
     if #macro.Events == 0 then
-        return false, "Macro is empty"
+        actionLog(
+            "PLAY",
+            "EMPTY",
+            {
+                macro =
+                    tostring(name),
+                selected =
+                    tostring(
+                        state.Selected
+                    ),
+                recording =
+                    tostring(
+                        state.Recording
+                    ),
+                owned_recording =
+                    tostring(
+                        state.RecordingName
+                    ),
+            }
+        )
+
+        return
+            false,
+            "Macro is empty — record and Stop & Save first"
     end
 
     state.Selected = name
@@ -3068,10 +3275,29 @@ function MacroController.SetAuto(enabled)
                 state.Selected
             ]
 
+        if macro
+            and #macro.Events == 0
+            and persistentStorage
+        then
+            local diskMacro =
+                loadMacroFromDisk(
+                    state.Selected
+                )
+
+            if diskMacro
+                and #diskMacro.Events > 0
+            then
+                macro = diskMacro
+                state.Macros[
+                    state.Selected
+                ] = diskMacro
+            end
+        end
+
         if not macro
             or #macro.Events == 0
         then
-            return false, "Select a recorded macro"
+            return false, "Select a recorded macro with saved events"
         end
 
         state.Auto = true
@@ -3273,10 +3499,13 @@ end
 
 function MacroController.Status()
     local selected =
-        state.Selected
-        and state.Macros[
+        state.RecordingMacro
+        or (
             state.Selected
-        ]
+            and state.Macros[
+                state.Selected
+            ]
+        )
 
     local counts =
         MacroController.CountEvents(
@@ -3287,6 +3516,14 @@ function MacroController.Status()
         Selected = state.Selected,
 
         Recording = state.Recording,
+        RecordingName =
+            state.RecordingName,
+        RecordingSessionId =
+            state.RecordingSessionId,
+        RecordingOwnedEvents =
+            state.RecordingMacro
+            and #state.RecordingMacro.Events
+            or 0,
         Playing = state.Playing,
         Auto = state.Auto,
 
