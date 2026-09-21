@@ -88,6 +88,7 @@ local state = {
     LastSamplePosition = nil,
     PreviousSamplePosition = nil,
     LastSampleAt = -math.huge,
+    LastRecordedRoom = nil,
 
     LastSkillRecordedAt = -math.huge,
     LastAttackRecordedAt = -math.huge,
@@ -443,14 +444,6 @@ local function sanitizeMacro(macro, fallbackName)
             or "Macro"
         )
 
-    if type(macro.Environment) ~= "table"
-        and Context
-        and type(Context.Environment) == "function"
-    then
-        macro.Environment =
-            Context.Environment()
-    end
-
     macro.Events = events
     macro.SampleInterval = nil
 
@@ -790,6 +783,11 @@ local function recordMove(macro, force)
         return false
     end
 
+    local pointContext =
+        Context
+        and Context.Capture(position)
+        or nil
+
     addEvent(
         macro,
         {
@@ -799,12 +797,32 @@ local function recordMove(macro, force)
                 position.Y,
                 position.Z,
             },
-            context =
-                Context
-                and Context.Capture(position)
-                or nil,
+            context = pointContext,
         }
     )
+
+    local room =
+        pointContext
+        and pointContext.room
+
+    if room
+        and room ~= state.LastRecordedRoom
+    then
+        state.LastRecordedRoom = room
+
+        actionLog(
+            "REC",
+            "ROOM",
+            {
+                room = room,
+                t =
+                    string.format(
+                        "%.3f",
+                        eventTime()
+                    ),
+            }
+        )
+    end
 
     state.PreviousSamplePosition =
         state.LastSamplePosition
@@ -2421,6 +2439,7 @@ function MacroController.StartRecording(name)
     state.LastSamplePosition = nil
     state.PreviousSamplePosition = nil
     state.LastSampleAt = -math.huge
+    state.LastRecordedRoom = nil
 
     state.LastSkillRecordedAt =
         -math.huge
