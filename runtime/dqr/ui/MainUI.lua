@@ -193,7 +193,7 @@ local function buildManifest()
                 Title = "Macro",
                 Icon = "route",
                 Description =
-                    "Record your route, jumps, basic attacks, and Q/E skills in any Dungeon Quest place.",
+                    "Record a high-fidelity room-aware route, jumps, basic attacks, Q/E skills, and combat recovery checkpoints.",
                 Features = {
                     {
                         Id = "Library",
@@ -291,7 +291,7 @@ local function buildManifest()
                         Id = "Recorder",
                         Title = "Recorder",
                         Description =
-                            "Capture character movement plus semantic basic attacks and Q/E skills. No screen/camera recording.",
+                            "Capture precise room-relative movement plus semantic attacks/skills. Playback can finish uncleared encounters before resuming.",
                         Accent = "mint",
                         Expanded = true,
                         Controls = {
@@ -477,6 +477,18 @@ local function buildManifest()
                                 Value = "0",
                             },
                             {
+                                Id = "Checkpoints",
+                                Type = "Live",
+                                Title = "Combat Checkpoints",
+                                Value = "0",
+                            },
+                            {
+                                Id = "Fallback",
+                                Type = "Live",
+                                Title = "Combat Recovery",
+                                Value = "None",
+                            },
+                            {
                                 Id = "LastAction",
                                 Type = "Live",
                                 Title = "Last Action",
@@ -499,6 +511,12 @@ local function buildManifest()
                                 Type = "Live",
                                 Title = "Current Place",
                                 Value = tostring(game.PlaceId),
+                            },
+                            {
+                                Id = "DungeonName",
+                                Type = "Live",
+                                Title = "Dungeon Context",
+                                Value = currentDungeon(),
                             },
                         },
                     },
@@ -578,6 +596,16 @@ function UI:UpdateLive()
     )
 
     adapter:SetLive(
+        "Macro.Status.Checkpoints",
+        tostring(status.Checkpoints or 0)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.Fallback",
+        tostring(status.LastFallback or "None")
+    )
+
+    adapter:SetLive(
         "Macro.Status.LastAction",
         tostring(status.LastAction or "None")
     )
@@ -590,12 +618,17 @@ function UI:UpdateLive()
     adapter:SetLive(
         "Macro.Status.Storage",
         tostring(status.Storage)
-        .. " • semantic combat recorder"
+        .. " • room-aware semantic macro"
     )
 
     adapter:SetLive(
         "Macro.Status.RecordedPlace",
         tostring(game.PlaceId)
+    )
+
+    adapter:SetLive(
+        "Macro.Status.DungeonName",
+        tostring(status.DungeonName or currentDungeon())
     )
 end
 
