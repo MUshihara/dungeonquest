@@ -3,7 +3,7 @@
 
 local Context = {}
 
-local CACHE_REFRESH = 1.50
+local CACHE_REFRESH = 5.00
 local BOX_MARGIN = 10.0
 
 local cache = {
@@ -204,14 +204,17 @@ function Context.Validate(environment)
         dungeonName()
 
     if recordedDungeon ~= ""
-        and currentDungeon ~= ""
         and recordedDungeon ~= currentDungeon
     then
         return false,
             "wrong_dungeon:"
             .. recordedDungeon
             .. "!="
-            .. currentDungeon
+            .. (
+                currentDungeon ~= ""
+                and currentDungeon
+                or "none"
+            )
     end
 
     -- If there is no dungeonName to disambiguate, require the exact place.
