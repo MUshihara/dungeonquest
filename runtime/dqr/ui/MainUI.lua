@@ -489,6 +489,24 @@ local function buildManifest()
                                 Value = "None",
                             },
                             {
+                                Id = "ShiftRecorded",
+                                Type = "Live",
+                                Title = "Shift Lock Recorded",
+                                Value = "No",
+                            },
+                            {
+                                Id = "ShiftPlayback",
+                                Type = "Live",
+                                Title = "Shift Lock Playback",
+                                Value = "Off",
+                            },
+                            {
+                                Id = "LastMatchLog",
+                                Type = "Live",
+                                Title = "Last Match Log",
+                                Value = "None",
+                            },
+                            {
                                 Id = "LastAction",
                                 Type = "Live",
                                 Title = "Last Action",
@@ -603,6 +621,25 @@ function UI:UpdateLive()
     adapter:SetLive(
         "Macro.Status.Fallback",
         tostring(status.LastFallback or "None")
+    )
+
+    adapter:SetLive(
+        "Macro.Status.ShiftRecorded",
+        status.ShiftLockRecorded
+        and "Yes"
+        or "No"
+    )
+
+    adapter:SetLive(
+        "Macro.Status.ShiftPlayback",
+        status.ShiftLockPlayback
+        and "LOCKED"
+        or "Off"
+    )
+
+    adapter:SetLive(
+        "Macro.Status.LastMatchLog",
+        tostring(status.LastMatchLog or "None")
     )
 
     adapter:SetLive(
