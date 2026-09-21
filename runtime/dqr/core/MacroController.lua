@@ -2389,13 +2389,17 @@ function MacroController.StartRecording(name)
         return false, "Already recording"
     end
 
-    macro.Schema = 4
-    macro.Mode = "RouteCombatSemantic"
+    macro.Schema = 5
+    macro.Mode = "ContextRouteCombatRecovery"
     macro.Events = {}
     macro.Duration = 0
     macro.UpdatedAt = os.time()
     macro.RecordedUniverseId = game.GameId
     macro.RecordedPlaceId = game.PlaceId
+    macro.Environment =
+        Context
+        and Context.Environment()
+        or nil
 
     state.Selected = macro.Name
 
@@ -2404,6 +2408,15 @@ function MacroController.StartRecording(name)
         os.clock()
 
     state.RecordAccumulator = 0
+    state.EncounterAccumulator = 0
+    state.ActiveEncounter = nil
+    state.LastFallback = "None"
+
+    if Context
+        and type(Context.Refresh) == "function"
+    then
+        Context.Refresh()
+    end
 
     state.LastSamplePosition = nil
     state.PreviousSamplePosition = nil
@@ -2456,6 +2469,13 @@ function MacroController.StopRecording(save)
         ]
 
     if macro then
+        if state.ActiveEncounter then
+            finalizeEncounter(
+                macro,
+                "recording_stopped"
+            )
+        end
+
         recordMove(
             macro,
             true
@@ -2478,6 +2498,8 @@ function MacroController.StopRecording(save)
 
     state.LastSamplePosition = nil
     state.PreviousSamplePosition = nil
+    state.ActiveEncounter = nil
+    state.EncounterAccumulator = 0
 
     local ok, err = true, nil
 
@@ -2505,6 +2527,7 @@ function MacroController.StopRecording(save)
             jumps = counts.Jumps,
             attacks = counts.Attacks,
             skills = counts.Skills,
+            checkpoints = counts.Checkpoints,
         }
     )
 
@@ -2766,6 +2789,7 @@ function MacroController.CountEvents(macro)
         Jumps = 0,
         Attacks = 0,
         Skills = 0,
+        Checkpoints = 0,
         Total = 0,
     }
 
@@ -2789,6 +2813,8 @@ function MacroController.CountEvents(macro)
             counts.Attacks += 1
         elseif event.type == "skill" then
             counts.Skills += 1
+        elseif event.type == "checkpoint" then
+            counts.Checkpoints += 1
         end
     end
 
@@ -2816,8 +2842,9 @@ function MacroController.Status()
 
         Status = state.Status,
         Storage = state.Storage,
-        Mode = "Route + attacks + Q/E skills",
+        Mode = "High-fidelity room route + semantic combat + recovery",
         LastAction = state.LastAction,
+        LastFallback = state.LastFallback,
 
         Duration =
             state.Recording
@@ -2839,6 +2866,7 @@ function MacroController.Status()
         Jumps = counts.Jumps,
         Attacks = counts.Attacks,
         Skills = counts.Skills,
+        Checkpoints = counts.Checkpoints,
 
         Count = #names(),
         Error = state.LastError,
@@ -2848,6 +2876,12 @@ function MacroController.Status()
 
         UniverseId = game.GameId,
         PlaceId = game.PlaceId,
+        DungeonName =
+            workspace:FindFirstChild("dungeonName")
+            and tostring(
+                workspace.dungeonName.Value
+            )
+            or "",
     }
 end
 
