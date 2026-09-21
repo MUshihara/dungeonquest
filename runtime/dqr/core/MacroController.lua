@@ -366,6 +366,10 @@ local function sanitizeMacro(macro, fallbackName)
                     tonumber(event.p[2]) or 0,
                     tonumber(event.p[3]) or 0,
                 },
+                context =
+                    type(event.context) == "table"
+                    and event.context
+                    or nil,
             }
 
         elseif type(event) == "table"
@@ -403,6 +407,25 @@ local function sanitizeMacro(macro, fallbackName)
                     look = event.look,
                 }
             end
+
+        elseif type(event) == "table"
+            and event.type == "checkpoint"
+        then
+            events[#events + 1] = {
+                type = "checkpoint",
+                t = tonumber(event.t) or 0,
+                room = event.room,
+                context = event.context,
+                enemies =
+                    type(event.enemies) == "table"
+                    and event.enemies
+                    or {},
+                radius =
+                    tonumber(event.radius)
+                    or 150,
+                reason =
+                    tostring(event.reason or "recorded_clear"),
+            }
         end
     end
 
@@ -410,14 +433,23 @@ local function sanitizeMacro(macro, fallbackName)
         return (a.t or 0) < (b.t or 0)
     end)
 
-    macro.Schema = 4
-    macro.Mode = "RouteCombatSemantic"
+    macro.Schema = 5
+    macro.Mode = "ContextRouteCombatRecovery"
+
     macro.Name =
         tostring(
             macro.Name
             or fallbackName
             or "Macro"
         )
+
+    if type(macro.Environment) ~= "table"
+        and Context
+        and type(Context.Environment) == "function"
+    then
+        macro.Environment =
+            Context.Environment()
+    end
 
     macro.Events = events
     macro.SampleInterval = nil
@@ -437,7 +469,7 @@ local function saveIndex()
             HttpService.JSONEncode,
             HttpService,
             {
-                Schema = 4,
+                Schema = 5,
                 Names = names(),
             }
         )
